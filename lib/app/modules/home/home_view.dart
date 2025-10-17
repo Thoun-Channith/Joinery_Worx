@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart'; // <-- Map import
 import 'package:intl/intl.dart';
 import '../../models/activity_log_model.dart';
 import 'home_controller.dart';
@@ -28,10 +29,12 @@ class HomeView extends GetView<HomeController> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // THIS IS THE FIX: Show a loading indicator while user data is fetched
+
               Obx(() => controller.isUserDataLoading.value
                   ? _buildLoadingIndicator()
                   : _buildWelcomeCard(theme)),
+              const SizedBox(height: 20),
+              _buildMapView(), // <-- Google Map
               const SizedBox(height: 20),
               _buildCheckInButton(),
               const SizedBox(height: 24),
@@ -45,11 +48,72 @@ class HomeView extends GetView<HomeController> {
     );
   }
 
-  // NEW WIDGET for the loading state.
+  // --- Live updating clock ---
+  Widget _buildCurrentTimeCard(ThemeData theme) {
+    return Card(
+      elevation: 2,
+      color: theme.colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+        child: Obx(() => Center(
+          child: Text(
+            controller.currentTime.value,
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: theme.colorScheme.onPrimaryContainer,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        )),
+      ),
+    );
+  }
+
+  // --- Google Map View ---
+  Widget _buildMapView() {
+    return Obx(() {
+      if (controller.currentLatLng.value == null) {
+        return Card(
+          elevation: 2,
+          child: SizedBox(
+            height: 250,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(controller.currentAddress.value),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+      return Card(
+        elevation: 2,
+        clipBehavior: Clip.antiAlias,
+        child: SizedBox(
+          height: 250,
+          child: GoogleMap(
+            onMapCreated: controller.onMapCreated,
+            initialCameraPosition: CameraPosition(
+              target: controller.currentLatLng.value!,
+              zoom: 16.0,
+            ),
+            markers: controller.markers.value,
+            myLocationEnabled: false,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: true,
+          ),
+        ),
+      );
+    });
+  }
+
   Widget _buildLoadingIndicator() {
     return const Card(
       child: SizedBox(
-        height: 180, // Give it a fixed height to prevent layout jumps
+        height: 180,
         child: Center(
           child: CircularProgressIndicator(),
         ),
@@ -58,7 +122,6 @@ class HomeView extends GetView<HomeController> {
   }
 
   Widget _buildWelcomeCard(ThemeData theme) {
-    // This widget's code is unchanged
     return Card(
       elevation: 2,
       child: Padding(
@@ -86,6 +149,8 @@ class HomeView extends GetView<HomeController> {
               )),
             ),
             const SizedBox(height: 8),
+            // --- THIS IS THE WIDGET YOU ASKED ABOUT ---
+            // It is correct and will update automatically.
             Obx(
                   () => _buildInfoRow(
                 theme,
@@ -93,12 +158,13 @@ class HomeView extends GetView<HomeController> {
                     ? Icons.check_circle_outline
                     : Icons.cancel_outlined,
                 iconColor:
-                controller.isClockedIn.value ? Colors.green : Colors.grey,
-                label: 'Status:',
+                controller.isClockedIn.value ? Colors.green : Colors.amber,
+                label: 'Current Status:',
                 valueText:
                 controller.isClockedIn.value ? 'Checked In' : 'Checked Out',
               ),
             ),
+            // --- END OF WIDGET ---
             const SizedBox(height: 8),
             Obx(
                   () => _buildInfoRow(
@@ -120,12 +186,13 @@ class HomeView extends GetView<HomeController> {
         String? valueText,
         Widget? valueWidget,
         Color? iconColor}) {
-    // This widget's code is unchanged
     return Row(
       children: [
         Icon(icon, color: iconColor ?? theme.colorScheme.secondary, size: 20),
         const SizedBox(width: 12),
-        Text('$label ', style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold)),
+        Text('$label ',
+            style: theme.textTheme.bodyLarge
+                ?.copyWith(fontWeight: FontWeight.bold)),
         Expanded(
           child: valueWidget ??
               Text(
@@ -138,7 +205,6 @@ class HomeView extends GetView<HomeController> {
   }
 
   Widget _buildCheckInButton() {
-    // This widget's code is unchanged
     return Obx(
           () => ElevatedButton.icon(
         style: ElevatedButton.styleFrom(
@@ -161,9 +227,8 @@ class HomeView extends GetView<HomeController> {
             strokeWidth: 3,
           ),
         )
-            : Icon(controller.isClockedIn.value
-            ? Icons.logout
-            : Icons.login),
+            : Icon(
+            controller.isClockedIn.value ? Icons.logout : Icons.login),
         label: Text(
             controller.isClockedIn.value ? 'Check Out' : 'Check In'),
       ),
@@ -171,7 +236,6 @@ class HomeView extends GetView<HomeController> {
   }
 
   Widget _buildActivityHeader(ThemeData theme) {
-    // This widget's code is unchanged
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -195,9 +259,11 @@ class HomeView extends GetView<HomeController> {
             children: [
               Text(
                 controller.dateFilter.value,
-                style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.secondary),
+                style: theme.textTheme.bodyLarge
+                    ?.copyWith(color: theme.colorScheme.secondary),
               ),
-              Icon(Icons.arrow_drop_down, color: theme.colorScheme.secondary),
+              Icon(Icons.arrow_drop_down,
+                  color: theme.colorScheme.secondary),
             ],
           ),
         )),
@@ -206,7 +272,6 @@ class HomeView extends GetView<HomeController> {
   }
 
   Widget _buildRecentActivityList(ThemeData theme) {
-    // This widget's code is unchanged
     return Obx(() {
       if (controller.activityLogs.isEmpty) {
         return Center(
@@ -245,7 +310,8 @@ class HomeView extends GetView<HomeController> {
                         () => Row(
                       children: [
                         Icon(Icons.location_on,
-                            size: 14, color: theme.textTheme.bodySmall?.color),
+                            size: 14,
+                            color: theme.textTheme.bodySmall?.color),
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
@@ -265,4 +331,3 @@ class HomeView extends GetView<HomeController> {
     });
   }
 }
-

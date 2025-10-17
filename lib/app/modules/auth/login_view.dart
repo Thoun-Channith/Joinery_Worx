@@ -40,7 +40,7 @@ class LoginView extends GetView<AuthController> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // App Icon Section
-                  const SizedBox(height: 74),
+                  const SizedBox(height: 60),
                   // _buildAppIcon(),
                   Image.asset("assets/icons/O-logo.png", height: 120,),
 

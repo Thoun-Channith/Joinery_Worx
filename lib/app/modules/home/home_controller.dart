@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:location/location.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:intl/intl.dart';
@@ -15,6 +16,12 @@ class HomeController extends GetxController {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   StreamSubscription? _activityStreamSubscription;
   StreamSubscription? _userDocSubscription;
+  Timer? _timer; // For live clock
+
+  // --- GOOGLE MAPS ---
+  GoogleMapController? mapController;
+  var currentLatLng = Rx<LatLng?>(null);
+  var markers = RxSet<Marker>();
 
   // --- OBSERVABLES ---
   var isClockedIn = false.obs;
@@ -25,19 +32,58 @@ class HomeController extends GetxController {
   var dateFilter = 'Last 7 Days'.obs;
   var activityLogs = <ActivityLog>[].obs;
   var isUserDataLoading = true.obs;
+  var currentTime = ''.obs; // For live clock
 
   @override
   void onInit() {
     super.onInit();
     _fetchUserData();
     _getCurrentLocationAndAddress();
+
+    // --- Start live clock ---
+    _updateTime(); // Set initial time
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
   }
 
   @override
   void onClose() {
     _activityStreamSubscription?.cancel();
     _userDocSubscription?.cancel();
+    mapController?.dispose();
+    _timer?.cancel(); // Stop clock timer
     super.onClose();
+  }
+
+  // --- Updates the live clock string ---
+  void _updateTime() {
+    final String formattedTime =
+    DateFormat('EEE, MMM d | hh:mm:ss a').format(DateTime.now());
+    currentTime.value = formattedTime;
+  }
+
+  void onMapCreated(GoogleMapController controller) {
+    mapController = controller;
+    _updateMapLocation();
+  }
+
+  void _updateMapLocation() {
+    if (currentLatLng.value != null) {
+      markers.value = {
+        Marker(
+          markerId: const MarkerId('currentLocation'),
+          position: currentLatLng.value!,
+          infoWindow: const InfoWindow(title: 'Your Location'),
+        ),
+      };
+      mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: currentLatLng.value!,
+            zoom: 16.0,
+          ),
+        ),
+      );
+    }
   }
 
   void _fetchUserData() {
@@ -45,6 +91,7 @@ class HomeController extends GetxController {
     final user = _auth.currentUser;
     if (user != null) {
       userName.value = user.displayName ?? user.email ?? 'Staff Member';
+      // This stream updates 'isClockedIn' automatically
       _userDocSubscription =
           _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
             if (doc.exists && doc.data() != null) {
@@ -101,8 +148,8 @@ class HomeController extends GetxController {
 
   Future<void> _fetchAddressForLog(ActivityLog log) async {
     try {
-      List<geocoding.Placemark> placemarks = await geocoding
-          .placemarkFromCoordinates(
+      List<geocoding.Placemark> placemarks =
+      await geocoding.placemarkFromCoordinates(
           log.location.latitude, log.location.longitude);
       if (placemarks.isNotEmpty) {
         final place = placemarks.first;
@@ -115,16 +162,20 @@ class HomeController extends GetxController {
     }
   }
 
-  // --- MISSING METHODS ARE NOW INCLUDED ---
-
   Future<void> _getCurrentLocationAndAddress() async {
+    currentAddress.value = 'Getting location...';
+    currentLatLng.value = null;
     try {
       LocationData? locationData = await _getCurrentLocation();
       if (locationData != null &&
           locationData.latitude != null &&
           locationData.longitude != null) {
-        List<geocoding.Placemark> placemarks = await geocoding
-            .placemarkFromCoordinates(
+        currentLatLng.value =
+            LatLng(locationData.latitude!, locationData.longitude!);
+        _updateMapLocation();
+
+        List<geocoding.Placemark> placemarks =
+        await geocoding.placemarkFromCoordinates(
             locationData.latitude!, locationData.longitude!);
         if (placemarks.isNotEmpty) {
           final place = placemarks.first;
@@ -133,9 +184,13 @@ class HomeController extends GetxController {
         } else {
           currentAddress.value = "Address not found.";
         }
+      } else {
+        currentAddress.value = "Location not available.";
+        currentLatLng.value = null;
       }
     } catch (e) {
       currentAddress.value = "Could not get location.";
+      currentLatLng.value = null;
     }
   }
 
@@ -170,11 +225,11 @@ class HomeController extends GetxController {
           .collection('activity_logs')
           .add({
         'status': newStatus ? 'checked-in' : 'checked-out',
-        'timestamp': FieldValue.serverTimestamp(),
+        'timestamp': Timestamp.now(), // Fix for instant activity list update
         'location': GeoPoint(locationData.latitude!, locationData.longitude!),
       });
 
-      _getCurrentLocationAndAddress();
+      _getCurrentLocationAndAddress(); // Refresh location and map
 
       Get.snackbar(
         'Success',
@@ -214,7 +269,16 @@ class HomeController extends GetxController {
       }
     }
 
-    return await location.getLocation();
+    // This is the timeout fix for the iOS simulator
+    try {
+      return await location.getLocation().timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      debugPrint("Location request timed out.");
+      return null;
+    } catch (e) {
+      debugPrint("Error getting location: $e");
+      return null;
+    }
   }
 
   Future<void> signOut() async {
@@ -222,4 +286,3 @@ class HomeController extends GetxController {
     Get.offAllNamed(Routes.LOGIN);
   }
 }
-
