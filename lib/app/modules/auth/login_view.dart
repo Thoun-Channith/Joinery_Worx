@@ -43,7 +43,6 @@ class LoginView extends GetView<AuthController> {
                   const SizedBox(height: 60),
                   // _buildAppIcon(),
                   Image.asset("assets/icons/O-logo.png", height: 120,),
-
                   const SizedBox(height: 25),
                   SvgPicture.asset(
                     'assets/icons-svg/text-logo.svg',
@@ -53,7 +52,7 @@ class LoginView extends GetView<AuthController> {
                       BlendMode.srcIn,
                     ),
                   ),
-                  const SizedBox(height: 50),
+                  const SizedBox(height: 25),
                   // This is the main white card for the login form.
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24.0),

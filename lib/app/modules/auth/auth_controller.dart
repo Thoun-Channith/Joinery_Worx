@@ -1,15 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_messaging/firebase_messaging.dart'; // <-- ADD THIS IMPORT
+// import 'package:firebase_messaging/firebase_messaging.dart'; // <-- REMOVE THIS
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-// We are not in the home controller, so we can't get location here.
-// We will set currentLocation to null.
 
 class AuthController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance; // <-- ADD THIS
+  // final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance; // <-- REMOVE THIS
 
   final TextEditingController nameController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
@@ -22,7 +20,6 @@ class AuthController extends GetxController {
     isPasswordHidden.value = !isPasswordHidden.value;
   }
 
-  // --- THIS METHOD IS UPDATED ---
   Future<void> createUser() async {
     if (nameController.text.isEmpty ||
         emailController.text.isEmpty ||
@@ -38,13 +35,12 @@ class AuthController extends GetxController {
         password: passwordController.text.trim(),
       );
 
-      // Update auth profile display name
+      // This updates the main Firebase Auth user profile (important!)
       await userCredential.user!.updateDisplayName(nameController.text.trim());
 
-      // Get FCM token for push notifications
-      String? fcmToken = await _firebaseMessaging.getToken();
+      // String? fcmToken = await _firebaseMessaging.getToken(); // <-- REMOVE THIS
 
-      // Create the new user map
+      // --- THIS MAP IS UPDATED ---
       final newUser = {
         'uid': userCredential.user!.uid,
         'name': nameController.text.trim(),
@@ -55,10 +51,10 @@ class AuthController extends GetxController {
         'role': 'staff', // Default role
         'position': '', // To be set by admin
         'employeeId': '', // To be set by admin
-        'fcmToken': fcmToken ?? '',
+        'fcmToken': '', // <-- SET TO EMPTY STRING
         'isCheckedIn': false,
         'isClockedIn': false,
-        'currentLocation': null, // Will be updated by home controller
+        'currentLocation': null,
       };
 
       // Save user details to Firestore
@@ -79,6 +75,7 @@ class AuthController extends GetxController {
   }
 
   Future<void> login() async {
+    // ... (This function is unchanged)
     if (emailController.text.isEmpty || passwordController.text.isEmpty) {
       Get.snackbar('Error', 'Email and password are required.');
       return;

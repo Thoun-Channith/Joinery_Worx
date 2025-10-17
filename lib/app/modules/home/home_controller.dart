@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart'; // <-- ADD THIS
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -14,9 +15,10 @@ import '../../routes/app_pages.dart';
 class HomeController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance; // <-- ADD THIS
   StreamSubscription? _activityStreamSubscription;
   StreamSubscription? _userDocSubscription;
-  Timer? _timer; // For live clock
+  Timer? _timer;
 
   // --- GOOGLE MAPS ---
   GoogleMapController? mapController;
@@ -32,16 +34,18 @@ class HomeController extends GetxController {
   var dateFilter = 'Last 7 Days'.obs;
   var activityLogs = <ActivityLog>[].obs;
   var isUserDataLoading = true.obs;
-  var currentTime = ''.obs; // For live clock
+  var currentTime = ''.obs;
+  var hasInitializedActivityListener = false;
 
   @override
   void onInit() {
     super.onInit();
     _fetchUserData();
     _getCurrentLocationAndAddress();
+    _setupFCM(); // <-- ADD THIS CALL
 
     // --- Start live clock ---
-    _updateTime(); // Set initial time
+    _updateTime();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
   }
 
@@ -50,11 +54,44 @@ class HomeController extends GetxController {
     _activityStreamSubscription?.cancel();
     _userDocSubscription?.cancel();
     mapController?.dispose();
-    _timer?.cancel(); // Stop clock timer
+    _timer?.cancel();
     super.onClose();
   }
 
-  // --- Updates the live clock string ---
+  // --- NEW METHOD: Handles FCM setup, permissions, and token saving ---
+  Future<void> _setupFCM() async {
+    // 1. Request permission from the user
+    await _firebaseMessaging.requestPermission();
+
+    // 2. Get the token
+    String? token = await _firebaseMessaging.getToken();
+
+    // 3. Save the token
+    await _saveTokenToFirestore(token);
+
+    // 4. Listen for any future token changes
+    _firebaseMessaging.onTokenRefresh.listen(_saveTokenToFirestore);
+  }
+
+  // --- NEW HELPER METHOD: Saves the token to Firestore ---
+  Future<void> _saveTokenToFirestore(String? token) async {
+    if (token == null) return; // Can't save a null token
+
+    final user = _auth.currentUser;
+    if (user == null) return; // Wait until user is logged in
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .set({'fcmToken': token}, SetOptions(merge: true));
+      print('FCM Token saved to Firestore.');
+    } catch (e) {
+      print('Error saving FCM token: $e');
+    }
+  }
+  // --- END OF NEW METHODS ---
+
   void _updateTime() {
     final String formattedTime =
     DateFormat('EEE, MMM d | hh:mm:ss a').format(DateTime.now());
@@ -91,16 +128,21 @@ class HomeController extends GetxController {
     final user = _auth.currentUser;
     if (user != null) {
       userName.value = user.displayName ?? user.email ?? 'Staff Member';
-      // This stream updates 'isClockedIn' automatically
       _userDocSubscription =
           _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
             if (doc.exists && doc.data() != null) {
               userName.value = doc.data()!['name'] ?? user.email ?? 'Staff Member';
               isClockedIn.value = doc.data()!['isCheckedIn'] ?? false;
             }
+
+            // --- FIX for activity list race condition ---
+            if (!hasInitializedActivityListener) {
+              _listenToActivityLogs();
+              hasInitializedActivityListener = true;
+            }
+
             isUserDataLoading.value = false;
           });
-      _listenToActivityLogs();
     } else {
       isUserDataLoading.value = false;
     }
@@ -214,11 +256,18 @@ class HomeController extends GetxController {
         return;
       }
 
+      // --- Update user's main doc ---
       await _firestore
           .collection('users')
           .doc(user.uid)
-          .set({'isCheckedIn': newStatus}, SetOptions(merge: true));
+          .set({
+        'isCheckedIn': newStatus,
+        'isClockedIn': newStatus, // Also update this field
+        'currentLocation': GeoPoint(locationData.latitude!, locationData.longitude!), // Update location
+        'lastSeen': FieldValue.serverTimestamp(), // Update lastSeen
+      }, SetOptions(merge: true));
 
+      // --- Add to activity subcollection ---
       await _firestore
           .collection('users')
           .doc(user.uid)
