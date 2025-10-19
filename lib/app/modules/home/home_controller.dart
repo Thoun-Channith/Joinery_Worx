@@ -1,7 +1,8 @@
 import 'dart:async';
+import 'package:background_fetch/background_fetch.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_messaging/firebase_messaging.dart'; // <-- ADD THIS
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -15,7 +16,7 @@ import '../../routes/app_pages.dart';
 class HomeController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance; // <-- ADD THIS
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
   StreamSubscription? _activityStreamSubscription;
   StreamSubscription? _userDocSubscription;
   Timer? _timer;
@@ -42,7 +43,8 @@ class HomeController extends GetxController {
     super.onInit();
     _fetchUserData();
     _getCurrentLocationAndAddress();
-    _setupFCM(); // <-- ADD THIS CALL
+    _setupFCM();
+    _initBackgroundFetch();
 
     // --- Start live clock ---
     _updateTime();
@@ -58,39 +60,125 @@ class HomeController extends GetxController {
     super.onClose();
   }
 
-  // --- NEW METHOD: Handles FCM setup, permissions, and token saving ---
-  Future<void> _setupFCM() async {
-    // 1. Request permission from the user
-    await _firebaseMessaging.requestPermission();
+  // --- NEW METHOD: To configure and potentially resume background tracking ---
+  Future<void> _initBackgroundFetch() async {
+    int status = await BackgroundFetch.configure(
+      BackgroundFetchConfig(
+        minimumFetchInterval: 15, // iOS minimum interval is 15 minutes. Android can be less.
+        stopOnTerminate: false,
+        enableHeadless: true,
+        startOnBoot: true,
+        requiredNetworkType: NetworkType.ANY,
+      ),
+      _onBackgroundFetch,
+      _onBackgroundFetchTimeout,
+    );
+    print('[BackgroundFetch] configure success: $status');
 
-    // 2. Get the token
-    String? token = await _firebaseMessaging.getToken();
-
-    // 3. Save the token
-    await _saveTokenToFirestore(token);
-
-    // 4. Listen for any future token changes
-    _firebaseMessaging.onTokenRefresh.listen(_saveTokenToFirestore);
+    // If the user is already checked in when the app starts, resume tracking.
+    if (isClockedIn.value) {
+      _startTracking();
+    }
   }
 
-  // --- NEW HELPER METHOD: Saves the token to Firestore ---
-  Future<void> _saveTokenToFirestore(String? token) async {
-    if (token == null) return; // Can't save a null token
-
+  // --- NEW METHOD: This is the task called when app is IN FOREGROUND ---
+  void _onBackgroundFetch(String taskId) async {
+    print("[BackgroundFetch] Event received: $taskId");
+    // This is the same logic as the headless task, for when the app is open.
     final user = _auth.currentUser;
-    if (user == null) return; // Wait until user is logged in
+    if (user != null && isClockedIn.value) {
+      print("[BackgroundFetch] App in foreground, user checked in. Updating location.");
+      try {
+        // Use _getCurrentLocation which has a timeout
+        LocationData? locationData = await _getCurrentLocation();
+        if (locationData != null) {
+          await _firestore.collection('users').doc(user.uid).update({
+            'currentLocation': GeoPoint(locationData.latitude!, locationData.longitude!),
+            'lastSeen': FieldValue.serverTimestamp(),
+          });
+        }
+      } catch(e) {
+        print("[BackgroundFetch] Foreground location update error: $e");
+      }
+    }
+    BackgroundFetch.finish(taskId);
+  }
 
+  // --- NEW METHOD: Handles task timeout ---
+  void _onBackgroundFetchTimeout(String taskId) {
+    print("[BackgroundFetch] TIMEOUT: $taskId");
+    BackgroundFetch.finish(taskId);
+  }
+
+  // --- NEW HELPER METHODS ---
+  void _startTracking() {
+    BackgroundFetch.start().then((int status) {
+      print('[BackgroundFetch] start success: $status');
+    }).catchError((e) {
+      print('[BackgroundFetch] start FAILURE: $e');
+    });
+  }
+
+  void _stopTracking() {
+    BackgroundFetch.stop().then((int status) {
+      print('[BackgroundFetch] stop success: $status');
+    });
+  }
+
+  Future<void> _setupFCM() async {
+    NotificationSettings settings = await _firebaseMessaging.requestPermission(
+      alert: true,
+      announcement: false,
+      badge: true,
+      carPlay: false,
+      criticalAlert: false,
+      provisional: false,
+      sound: true,
+    );
+    print('User granted permission: ${settings.authorizationStatus}');
+
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      try {
+        String? token = await _firebaseMessaging.getToken();
+        print('FCM Token: $token');
+        await _saveTokenToFirestore(token);
+        _firebaseMessaging.onTokenRefresh.listen(_saveTokenToFirestore);
+      } catch (e) {
+        print('Error getting FCM token: $e');
+        if (e.toString().contains('apns-token-not-set')) {
+          print('APNS token not available yet. Will retry saving later if token refreshes.');
+        }
+      }
+    } else {
+      print('User declined or has not accepted notification permissions');
+    }
+  }
+
+  Future<void> _saveTokenToFirestore(String? token) async {
+    if (token == null || token.isEmpty) {
+      print('Attempted to save null or empty token.');
+      return;
+    }
+    final user = _auth.currentUser;
+    if (user == null) {
+      print('User not logged in, cannot save token yet.');
+      return;
+    }
     try {
+      final userDoc = await _firestore.collection('users').doc(user.uid).get();
+      if (userDoc.exists && userDoc.data()?['fcmToken'] == token) {
+        print('FCM Token is already up-to-date.');
+        return;
+      }
       await _firestore
           .collection('users')
           .doc(user.uid)
           .set({'fcmToken': token}, SetOptions(merge: true));
-      print('FCM Token saved to Firestore.');
+      print('FCM Token saved/updated in Firestore.');
     } catch (e) {
-      print('Error saving FCM token: $e');
+      print('Error saving FCM token to Firestore: $e');
     }
   }
-  // --- END OF NEW METHODS ---
 
   void _updateTime() {
     final String formattedTime =
@@ -128,21 +216,29 @@ class HomeController extends GetxController {
     final user = _auth.currentUser;
     if (user != null) {
       userName.value = user.displayName ?? user.email ?? 'Staff Member';
-      _userDocSubscription =
-          _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
-            if (doc.exists && doc.data() != null) {
-              userName.value = doc.data()!['name'] ?? user.email ?? 'Staff Member';
-              isClockedIn.value = doc.data()!['isCheckedIn'] ?? false;
-            }
+      _userDocSubscription = _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
+        if (doc.exists && doc.data() != null) {
+          final data = doc.data()!;
+          userName.value = data['name'] ?? user.email ?? 'Staff Member';
 
-            // --- FIX for activity list race condition ---
-            if (!hasInitializedActivityListener) {
-              _listenToActivityLogs();
-              hasInitializedActivityListener = true;
-            }
+          bool wasClockedIn = isClockedIn.value;
+          bool isNowClockedIn = data['isCheckedIn'] ?? false;
+          isClockedIn.value = isNowClockedIn;
 
-            isUserDataLoading.value = false;
-          });
+          if (wasClockedIn != isNowClockedIn) {
+            if (isNowClockedIn) {
+              _startTracking();
+            } else {
+              _stopTracking();
+            }
+          }
+        }
+        if (!hasInitializedActivityListener) {
+          _listenToActivityLogs();
+          hasInitializedActivityListener = true;
+        }
+        isUserDataLoading.value = false;
+      });
     } else {
       isUserDataLoading.value = false;
     }
@@ -250,35 +346,25 @@ class HomeController extends GetxController {
       LocationData? locationData = await _getCurrentLocation();
 
       if (locationData == null) {
-        Get.snackbar('Location Error',
-            'Could not get location. Please enable GPS and try again.');
+        Get.snackbar('Location Error', 'Could not get location. Please enable GPS and try again.');
         isLoading.value = false;
         return;
       }
 
-      // --- Update user's main doc ---
-      await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .set({
+      await _firestore.collection('users').doc(user.uid).update({
         'isCheckedIn': newStatus,
-        'isClockedIn': newStatus, // Also update this field
-        'currentLocation': GeoPoint(locationData.latitude!, locationData.longitude!), // Update location
-        'lastSeen': FieldValue.serverTimestamp(), // Update lastSeen
-      }, SetOptions(merge: true));
+        'isClockedIn': newStatus,
+        'currentLocation': GeoPoint(locationData.latitude!, locationData.longitude!),
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
 
-      // --- Add to activity subcollection ---
-      await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('activity_logs')
-          .add({
+      await _firestore.collection('users').doc(user.uid).collection('activity_logs').add({
         'status': newStatus ? 'checked-in' : 'checked-out',
-        'timestamp': Timestamp.now(), // Fix for instant activity list update
+        'timestamp': Timestamp.now(),
         'location': GeoPoint(locationData.latitude!, locationData.longitude!),
       });
 
-      _getCurrentLocationAndAddress(); // Refresh location and map
+      _getCurrentLocationAndAddress();
 
       Get.snackbar(
         'Success',
@@ -289,9 +375,7 @@ class HomeController extends GetxController {
       );
     } catch (e) {
       Get.snackbar('Error', 'An error occurred: ${e.toString()}',
-          snackPosition: SnackPosition.BOTTOM,
-          backgroundColor: Colors.red,
-          colorText: Colors.white);
+          snackPosition: SnackPosition.BOTTOM, backgroundColor: Colors.red, colorText: Colors.white);
     } finally {
       isLoading.value = false;
     }
@@ -301,7 +385,6 @@ class HomeController extends GetxController {
     Location location = Location();
     bool serviceEnabled;
     PermissionStatus permissionGranted;
-
     serviceEnabled = await location.serviceEnabled();
     if (!serviceEnabled) {
       serviceEnabled = await location.requestService();
@@ -309,7 +392,6 @@ class HomeController extends GetxController {
         return null;
       }
     }
-
     permissionGranted = await location.hasPermission();
     if (permissionGranted == PermissionStatus.denied) {
       permissionGranted = await location.requestPermission();
@@ -317,8 +399,6 @@ class HomeController extends GetxController {
         return null;
       }
     }
-
-    // This is the timeout fix for the iOS simulator
     try {
       return await location.getLocation().timeout(const Duration(seconds: 5));
     } on TimeoutException {
@@ -331,7 +411,9 @@ class HomeController extends GetxController {
   }
 
   Future<void> signOut() async {
+    _stopTracking();
     await _auth.signOut();
     Get.offAllNamed(Routes.LOGIN);
   }
 }
+

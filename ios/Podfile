@@ -38,10 +38,19 @@ target 'Runner' do
   end
 end
 
-# 🧩 Important fix for Apple Silicon (M1/M2/M3)
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # ADD THIS SECTION for background_fetch
+    if target.name == 'background_fetch'
+      target.build_configurations.each do |config|
+        config.build_settings['SWIFT_VERSION'] = '5.0'
+        config.build_settings['ENABLE_BITCODE'] = 'NO'
+      end
+    end
+
+    # Your existing Apple Silicon fix
     target.build_configurations.each do |config|
       config.build_settings["EXCLUDED_ARCHS[sdk=iphonesimulator*]"] = "arm64"
     end

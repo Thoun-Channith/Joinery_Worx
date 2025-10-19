@@ -46,3 +46,7 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    //implementation("com.transistorsoft:tsbackgroundfetch:1.0.0")
+}

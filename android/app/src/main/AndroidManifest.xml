@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -6,6 +7,7 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <application
+        tools:replace="android:label"
         android:label="joinery_worx"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
@@ -15,6 +17,10 @@
             android:foregroundServiceType="location"
             android:exported="false"/>
 
+        <service android:name="com.transistorsoft.flutter.backgroundfetch.BackgroundFetchService"
+            android:foregroundServiceType="location"
+            android:enabled="true"
+            android:stopWithTask="true" />
 
         <meta-data
             android:name="com.google.android.geo.API_KEY"
@@ -42,5 +48,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
     </application>
 </manifest>

@@ -30,6 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
   # Firebase
   firebase_core: ^4.1.0
   firebase_auth: ^6.0.2
@@ -47,6 +48,7 @@ dependencies:
   geocoding: ^4.0.0
   flutter_svg: ^2.2.0
   firebase_messaging: ^16.0.1
+  background_fetch: ^1.4.0
 
 dev_dependencies:
   flutter_test:

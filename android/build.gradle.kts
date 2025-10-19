@@ -2,8 +2,17 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        maven {
+            url = uri("https://transistorsoft.github.io/maven")
+        }
+        // ADD THIS - background_fetch local libs
+        maven {
+            url = uri("${project(":background_fetch").projectDir}/libs")
+        }
     }
 }
+
+// ... rest of your file remains the same
 
 val newBuildDir: Directory =
     rootProject.layout.buildDirectory

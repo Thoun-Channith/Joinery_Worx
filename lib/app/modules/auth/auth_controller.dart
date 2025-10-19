@@ -1,13 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-// import 'package:firebase_messaging/firebase_messaging.dart'; // <-- REMOVE THIS
+// import 'package:firebase_messaging/firebase_messaging.dart'; // Ensure this is removed/commented
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class AuthController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  // final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance; // <-- REMOVE THIS
+  // final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance; // Ensure this is removed/commented
 
   final TextEditingController nameController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
@@ -35,12 +35,10 @@ class AuthController extends GetxController {
         password: passwordController.text.trim(),
       );
 
-      // This updates the main Firebase Auth user profile (important!)
       await userCredential.user!.updateDisplayName(nameController.text.trim());
 
-      // String? fcmToken = await _firebaseMessaging.getToken(); // <-- REMOVE THIS
+      // String? fcmToken = await _firebaseMessaging.getToken(); // Ensure this is removed/commented
 
-      // --- THIS MAP IS UPDATED ---
       final newUser = {
         'uid': userCredential.user!.uid,
         'name': nameController.text.trim(),
@@ -48,16 +46,15 @@ class AuthController extends GetxController {
         'createdAt': FieldValue.serverTimestamp(),
         'lastSeen': FieldValue.serverTimestamp(),
         'accountEnabled': true,
-        'role': 'staff', // Default role
-        'position': '', // To be set by admin
-        'employeeId': '', // To be set by admin
-        'fcmToken': '', // <-- SET TO EMPTY STRING
+        'role': 'staff',
+        'position': '',
+        'employeeId': '',
+        'fcmToken': '', // Set to empty
         'isCheckedIn': false,
         'isClockedIn': false,
         'currentLocation': null,
       };
 
-      // Save user details to Firestore
       await _firestore
           .collection('users')
           .doc(userCredential.user!.uid)
@@ -66,7 +63,9 @@ class AuthController extends GetxController {
       print(
           'User created: ${userCredential.user!.uid}, Name: ${nameController.text.trim()}');
 
-      // Navigation is handled by SplashController
+      // Ensure this line IS REMOVED or commented out:
+      // Get.offAllNamed(Routes.HOME);
+
     } on FirebaseAuthException catch (e) {
       Get.snackbar('Sign Up Failed', e.message ?? 'An unknown error occurred.');
     } finally {
@@ -75,7 +74,6 @@ class AuthController extends GetxController {
   }
 
   Future<void> login() async {
-    // ... (This function is unchanged)
     if (emailController.text.isEmpty || passwordController.text.isEmpty) {
       Get.snackbar('Error', 'Email and password are required.');
       return;
@@ -86,7 +84,10 @@ class AuthController extends GetxController {
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
-      // Navigation is handled by SplashController
+
+      // Ensure this line IS REMOVED or commented out:
+      // Get.offAllNamed(Routes.HOME);
+
     } on FirebaseAuthException catch (e) {
       Get.snackbar('Login Failed', e.message ?? 'An unknown error occurred.');
     } finally {
