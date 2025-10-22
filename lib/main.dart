@@ -5,7 +5,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:location/location.dart';
-
 import 'app/routes/app_pages.dart';
 import 'app/theme/app_theme.dart';
 import 'firebase_options.dart';
@@ -18,32 +17,33 @@ void backgroundFetchHeadlessTask(HeadlessTask task) async {
   bool isTimeout = task.timeout;
 
   if (isTimeout) {
-    // If the task timed out, just finish.
     print("[BackgroundFetch] Headless task timed-out: $taskId");
     BackgroundFetch.finish(taskId);
     return;
   }
   print("[BackgroundFetch] Headless event received: $taskId");
 
-  // Initialize Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Get current user
   final user = FirebaseAuth.instance.currentUser;
   if (user != null) {
-    // Get the user's document
     final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
 
-    // Check if the user is currently checked in
     if (userDoc.exists && userDoc.data()?['isCheckedIn'] == true) {
       print("[BackgroundFetch] User is checked in. Getting location...");
 
-      // Get the current location
       Location location = Location();
       try {
-        LocationData locationData = await location.getLocation().timeout(const Duration(seconds: 10));
+        LocationData locationData = await location.getLocation().timeout(const Duration(seconds: 30)); // You might want to increase this timeout too
 
-        // Update Firestore with the new location and last seen time
+        // --- ADD THIS CHECK ---
+        if (locationData.isMock == true) {
+          print("[BackgroundFetch] Mock location detected. Skipping update.");
+          BackgroundFetch.finish(taskId); // Finish task, but do not update location
+          return;
+        }
+        // --- END OF ADDED CHECK ---
+
         await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
           'currentLocation': GeoPoint(locationData.latitude!, locationData.longitude!),
           'lastSeen': FieldValue.serverTimestamp(),
@@ -59,10 +59,8 @@ void backgroundFetchHeadlessTask(HeadlessTask task) async {
     print("[BackgroundFetch] No user logged in. Stopping task.");
   }
 
-  // Signal to the OS that the task is complete.
   BackgroundFetch.finish(taskId);
 }
-
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

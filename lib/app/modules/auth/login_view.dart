@@ -65,7 +65,7 @@ class LoginView extends GetView<AuthController> {
                         padding: const EdgeInsets.all(24.0),
                         // Obx makes the widget rebuild when isLogin changes.
                         child: Obx(
-                          () => Column(
+                              () => Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               Text(
@@ -146,7 +146,7 @@ class LoginView extends GetView<AuthController> {
                               Center(
                                 child: TextButton(
                                   onPressed: () =>
-                                      isLogin.value = !isLogin.value,
+                                  isLogin.value = !isLogin.value,
                                   child: Text(
                                     isLogin.value
                                         ? "Don't have an account? Sign Up"
@@ -271,7 +271,7 @@ class LoginView extends GetView<AuthController> {
   Widget _buildPasswordTextField() {
     // Obx rebuilds this widget when controller.isPasswordHidden changes.
     return Obx(
-      () => TextFormField(
+          () => TextFormField(
         controller: controller.passwordController,
         obscureText: controller.isPasswordHidden.value,
         decoration: InputDecoration(

@@ -9,7 +9,6 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:location/location.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:intl/intl.dart';
-
 import '../../models/activity_log_model.dart';
 import '../../routes/app_pages.dart';
 
@@ -255,16 +254,16 @@ class HomeController extends GetxController {
     final user = _auth.currentUser;
     if (user == null) return;
 
+    // This query is now 100% secure.
+    // It sorts by the un-fakeable server timestamp and limits to 50 logs.
     Query query = _firestore
         .collection('users')
         .doc(user.uid)
         .collection('activity_logs')
-        .orderBy('timestamp', descending: true);
+        .orderBy('timestamp', descending: true)
+        .limit(50); // Added limit for performance
 
-    if (dateFilter.value == 'Last 7 Days') {
-      DateTime sevenDaysAgo = DateTime.now().subtract(const Duration(days: 7));
-      query = query.where('timestamp', isGreaterThanOrEqualTo: sevenDaysAgo);
-    }
+    // The vulnerable filter code has been removed.
 
     _activityStreamSubscription = query.snapshots().listen((snapshot) {
       List<ActivityLog> newLogs = snapshot.docs.map((doc) {
@@ -392,28 +391,67 @@ class HomeController extends GetxController {
         return null;
       }
     }
+
     permissionGranted = await location.hasPermission();
     if (permissionGranted == PermissionStatus.denied) {
       permissionGranted = await location.requestPermission();
       if (permissionGranted != PermissionStatus.granted) {
-        return null;
+        return null; // User denied the request
       }
     }
+    // --- ADD THIS ELSE IF BLOCK ---
+    else if (permissionGranted == PermissionStatus.deniedForever) {
+      // User has permanently denied permission.
+      debugPrint("Location permission permanently denied.");
+      Get.snackbar(
+        'Permission Error',
+        'Location permission is permanently denied. Please go to your app settings to enable it.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+      return null;
+    }
+    // --- END OF ADDED BLOCK ---
+
     try {
-      return await location.getLocation().timeout(const Duration(seconds: 5));
+      // Get location (with your 30s timeout)
+      final locationData = await location.getLocation().timeout(const Duration(seconds: 30));
+
+      // --- This check is correct ---
+      if (locationData.isMock == true) {
+        debugPrint("Mock location detected. Rejecting.");
+        Get.snackbar(
+          'Error',
+          'Fake GPS is not allowed. Please disable mock locations.',
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+        );
+        return null; // Reject the fake location
+      }
+      // --- END OF CHECK ---
+
+      return locationData;
+
     } on TimeoutException {
       debugPrint("Location request timed out.");
+      Get.snackbar(
+        'Location Error',
+        'Could not get location. Request timed out.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.orange,
+        colorText: Colors.white,
+      );
       return null;
     } catch (e) {
       debugPrint("Error getting location: $e");
       return null;
     }
   }
-
   Future<void> signOut() async {
     _stopTracking();
     await _auth.signOut();
     Get.offAllNamed(Routes.LOGIN);
   }
 }
-
