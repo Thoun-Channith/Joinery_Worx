@@ -63,7 +63,7 @@ class HomeController extends GetxController {
   Future<void> _initBackgroundFetch() async {
     int status = await BackgroundFetch.configure(
       BackgroundFetchConfig(
-        minimumFetchInterval: 15, // iOS minimum interval is 15 minutes. Android can be less.
+        minimumFetchInterval: 5, // iOS minimum interval is 15 minutes. Android can be less.
         stopOnTerminate: false,
         enableHeadless: true,
         startOnBoot: true,
