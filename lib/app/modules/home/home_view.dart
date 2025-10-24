@@ -36,7 +36,7 @@ class HomeView extends GetView<HomeController> {
               const SizedBox(height: 20),
               _buildMapView(), // <-- Google Map
               const SizedBox(height: 20),
-              _buildCheckInButton(),
+              _buildClockInOutButton(),
               const SizedBox(height: 24),
               _buildActivityHeader(theme),
               const SizedBox(height: 8),
@@ -161,7 +161,7 @@ class HomeView extends GetView<HomeController> {
                 controller.isClockedIn.value ? Colors.green : Colors.amber,
                 label: 'Current Status:',
                 valueText:
-                controller.isClockedIn.value ? 'Checked In' : 'Checked Out',
+                controller.isClockedIn.value ? 'Clocked In' : 'Clocked Out',
               ),
             ),
             // --- END OF WIDGET ---
@@ -204,7 +204,7 @@ class HomeView extends GetView<HomeController> {
     );
   }
 
-  Widget _buildCheckInButton() {
+  Widget _buildClockInOutButton() {
     return Obx(
           () => ElevatedButton.icon(
         style: ElevatedButton.styleFrom(
@@ -230,7 +230,7 @@ class HomeView extends GetView<HomeController> {
             : Icon(
             controller.isClockedIn.value ? Icons.logout : Icons.login),
         label: Text(
-            controller.isClockedIn.value ? 'Check Out' : 'Check In'),
+            controller.isClockedIn.value ? 'Clock Out' : 'Clock In'),
       ),
     );
   }

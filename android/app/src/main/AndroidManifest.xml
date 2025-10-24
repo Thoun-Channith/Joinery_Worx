@@ -10,9 +10,9 @@
 
     <application
         tools:replace="android:label"
-        android:label="joinery_worx"
+        android:label="Joinery Worx"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/launcher_icon">
 
         <service
             android:name="com.lyokone.location.FlutterLocationService"
@@ -27,6 +27,10 @@
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyAgNVUfaLagLacjJL0LXosB0CM3sg8wpJc" />
+
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
 
         <activity
             android:name=".MainActivity"

@@ -80,20 +80,32 @@ class HomeController extends GetxController {
     }
   }
 
-  // --- NEW METHOD: This is the task called when app is IN FOREGROUND ---
+  // --- RECOMMENDED CHANGE to _onBackgroundFetch ---
   void _onBackgroundFetch(String taskId) async {
     print("[BackgroundFetch] Event received: $taskId");
-    // This is the same logic as the headless task, for when the app is open.
     final user = _auth.currentUser;
     if (user != null && isClockedIn.value) {
-      print("[BackgroundFetch] App in foreground, user checked in. Updating location.");
+      print("[BackgroundFetch] App in foreground, user clocked in. Updating location.");
       try {
-        // Use _getCurrentLocation which has a timeout
         LocationData? locationData = await _getCurrentLocation();
         if (locationData != null) {
+
+          // --- 1. UPDATE "LAST SEEN" (like you do now) ---
+          // This is good for a quick "live view"
           await _firestore.collection('users').doc(user.uid).update({
             'currentLocation': GeoPoint(locationData.latitude!, locationData.longitude!),
             'lastSeen': FieldValue.serverTimestamp(),
+          });
+
+          // --- 2. ADD TO "BREADCRUMB TRAIL" (The new part) ---
+          // This creates a history for your admin panel
+          await _firestore
+              .collection('users')
+              .doc(user.uid)
+              .collection('location_trail') // <-- New collection
+              .add({
+            'timestamp': FieldValue.serverTimestamp(),
+            'location': GeoPoint(locationData.latitude!, locationData.longitude!),
           });
         }
       } catch(e) {
@@ -221,7 +233,7 @@ class HomeController extends GetxController {
           userName.value = data['name'] ?? user.email ?? 'Staff Member';
 
           bool wasClockedIn = isClockedIn.value;
-          bool isNowClockedIn = data['isCheckedIn'] ?? false;
+          bool isNowClockedIn = data['isClockedIn'] ?? false;
           isClockedIn.value = isNowClockedIn;
 
           if (wasClockedIn != isNowClockedIn) {
@@ -351,15 +363,14 @@ class HomeController extends GetxController {
       }
 
       await _firestore.collection('users').doc(user.uid).update({
-        'isCheckedIn': newStatus,
         'isClockedIn': newStatus,
         'currentLocation': GeoPoint(locationData.latitude!, locationData.longitude!),
         'lastSeen': FieldValue.serverTimestamp(),
       });
 
       await _firestore.collection('users').doc(user.uid).collection('activity_logs').add({
-        'status': newStatus ? 'checked-in' : 'checked-out',
-        'timestamp': Timestamp.now(),
+        'status': newStatus ? 'clocked-in' : 'clocked-out',
+        'timestamp': FieldValue.serverTimestamp(),
         'location': GeoPoint(locationData.latitude!, locationData.longitude!),
       });
 
@@ -367,7 +378,7 @@ class HomeController extends GetxController {
 
       Get.snackbar(
         'Success',
-        'You have successfully ${newStatus ? "checked in" : "checked out"}.',
+        'You have successfully ${newStatus ? "clocked in" : "clocked out"}.',
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.green,
         colorText: Colors.white,
