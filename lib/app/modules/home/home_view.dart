@@ -220,7 +220,7 @@ class HomeView extends GetView<HomeController> {
         ),
         onPressed: controller.isLoading.value
             ? null
-            : () => controller.toggleCheckInStatus(),
+            : () => controller.toggleClockInStatus(),
         icon: controller.isLoading.value
             ? Container(
           width: 24,
@@ -293,7 +293,7 @@ class HomeView extends GetView<HomeController> {
         itemCount: controller.activityLogs.length,
         itemBuilder: (context, index) {
           final ActivityLog log = controller.activityLogs[index];
-          final isCheckIn = log.status == 'checked-in';
+          final isCheckIn = log.status == 'clocked-in';
           final formattedTime =
           DateFormat('EEE, MMM d, hh:mm a').format(log.timestamp.toDate());
 
@@ -304,7 +304,7 @@ class HomeView extends GetView<HomeController> {
                 isCheckIn ? Icons.login : Icons.logout,
                 color: isCheckIn ? Colors.green : Colors.orange,
               ),
-              title: Text(isCheckIn ? 'Checked In' : 'Checked Out'),
+              title: Text(isCheckIn ? 'Clocked In' : 'Clocked Out'),
               subtitle: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
