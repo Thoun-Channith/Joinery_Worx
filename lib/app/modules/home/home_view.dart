@@ -23,25 +23,29 @@ class HomeView extends GetView<HomeController> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+      body: RefreshIndicator(
+          onRefresh: controller.onPullToRefresh,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
 
-              Obx(() => controller.isUserDataLoading.value
-                  ? _buildLoadingIndicator()
-                  : _buildWelcomeCard(theme)),
-              const SizedBox(height: 20),
-              _buildMapView(), // <-- Google Map
-              const SizedBox(height: 20),
-              _buildClockInOutButton(),
-              const SizedBox(height: 24),
-              _buildActivityHeader(theme),
-              const SizedBox(height: 8),
-              _buildRecentActivityList(theme),
-            ],
+                Obx(() => controller.isUserDataLoading.value
+                    ? _buildLoadingIndicator()
+                    : _buildWelcomeCard(theme)),
+                const SizedBox(height: 20),
+                _buildMapView(), // <-- Google Map
+                const SizedBox(height: 20),
+                _buildClockInOutButton(),
+                const SizedBox(height: 24),
+                _buildActivityHeader(theme),
+                const SizedBox(height: 8),
+                _buildRecentActivityList(theme),
+              ],
+            ),
           ),
         ),
       ),

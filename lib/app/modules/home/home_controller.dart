@@ -59,6 +59,13 @@ class HomeController extends GetxController {
     super.onClose();
   }
 
+  // --- ADD THIS FUNCTION ---
+  Future<void> onPullToRefresh() async {
+    print("Refreshing location and data...");
+    await _getCurrentLocationAndAddress(); // Re-fetch location
+    // No need to call _fetchUserData here, the location fetch handles it
+  }
+
   // --- NEW METHOD: To configure and potentially resume background tracking ---
   Future<void> _initBackgroundFetch() async {
     int status = await BackgroundFetch.configure(
@@ -203,7 +210,8 @@ class HomeController extends GetxController {
   }
 
   void _updateMapLocation() {
-    if (currentLatLng.value != null) {
+    // Add a check to ensure the controller exists and the location is valid
+    if (mapController != null && currentLatLng.value != null) {
       markers.value = {
         Marker(
           markerId: const MarkerId('currentLocation'),
@@ -211,14 +219,23 @@ class HomeController extends GetxController {
           infoWindow: const InfoWindow(title: 'Your Location'),
         ),
       };
-      mapController?.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: currentLatLng.value!,
-            zoom: 16.0,
+      try {
+        // Now it's safer to call animateCamera
+        mapController!.animateCamera( // Use ! because we checked for null
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: currentLatLng.value!,
+              zoom: 16.0,
+            ),
           ),
-        ),
-      );
+        );
+      } catch (e) {
+        // Catch potential errors if the controller becomes invalid
+        // during the animation attempt.
+        print("Error animating map camera: $e");
+      }
+    } else {
+      print("Map controller not ready or location not available for map update.");
     }
   }
 
@@ -460,9 +477,57 @@ class HomeController extends GetxController {
       return null;
     }
   }
+
   Future<void> signOut() async {
-    _stopTracking();
+    final user = _auth.currentUser; // Get user before potential sign out
+    final wasClockedIn = isClockedIn.value; // Check status before sign out
+
+    _stopTracking(); // Stop background fetch first
+
+    // --- ADD THIS ---
+    if (user != null && wasClockedIn) {
+      // If user exists and was clocked in, ensure Firestore is updated
+      await _forceClockOutInFirestore(user.uid);
+    }
+    // --- END ADD ---
+
     await _auth.signOut();
+    // Clear local token on manual sign out? Optional.
+    // await _deviceStorage.remove('fcmToken');
     Get.offAllNamed(Routes.LOGIN);
   }
+
+  // ADD THIS FUNCTION
+  Future<void> _forceClockOutInFirestore(String userId) async {
+    print("Forcing clock-out in Firestore for user: $userId");
+    try {
+      // Get current location for the log (optional but good)
+      LocationData? locationData = await _getCurrentLocation();
+      GeoPoint? lastLocation = (locationData != null)
+          ? GeoPoint(locationData.latitude!, locationData.longitude!)
+          : null; // Use null if location fails
+
+      // Update the main user document
+      await _firestore.collection('users').doc(userId).update({
+        'isCheckedIn': false,
+        'isClockedIn': false, // Ensure consistency
+        // Optionally update currentLocation and lastSeen here too
+        // 'currentLocation': lastLocation,
+        // 'lastSeen': FieldValue.serverTimestamp(),
+      });
+
+      // Add the activity log
+      await _firestore.collection('users').doc(userId).collection('activity_logs').add({
+        'status': 'checked-out',
+        'timestamp': FieldValue.serverTimestamp(), // Use server time
+        'location': lastLocation,
+        'reason': 'auto_sign_out_new_device' // Add a reason for clarity
+      });
+      print("Forced clock-out successful in Firestore.");
+    } catch (e) {
+      print("Error during forced clock-out in Firestore: $e");
+      // Handle error if necessary, maybe log it differently
+    }
+  }
+// END OF NEW FUNCTION
 }
