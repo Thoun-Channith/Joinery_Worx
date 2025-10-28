@@ -210,32 +210,54 @@ class HomeView extends GetView<HomeController> {
 
   Widget _buildClockInOutButton() {
     return Obx(
-          () => ElevatedButton.icon(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: controller.isClockedIn.value
-              ? Colors.orange.shade700
-              : Colors.green.shade600,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        onPressed: controller.isLoading.value
-            ? null
-            : () => controller.toggleClockInStatus(),
-        icon: controller.isLoading.value
-            ? Container(
-          width: 24,
-          height: 24,
-          padding: const EdgeInsets.all(2.0),
-          child: const CircularProgressIndicator(
-            color: Colors.white,
-            strokeWidth: 3,
+          () {
+        // Determine if the button should be disabled
+        // It's disabled if loading, if location hasn't loaded yet (currentLatLng is null),
+        // or if there was an error getting the location.
+        final bool isDisabled = controller.isLoading.value ||
+            controller.currentLatLng.value == null ||
+            controller.isLocationError.value;
+
+        // Determine the button text based on the state
+        String buttonText;
+        if (controller.currentLatLng.value == null || controller.isLocationError.value) {
+          buttonText = 'Getting Location...'; // Show this while waiting for location or if error
+        } else if (controller.isClockedIn.value) {
+          buttonText = 'Check Out';
+        } else {
+          buttonText = 'Check In';
+        }
+
+        return ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isDisabled
+                ? Colors.grey // Grey color when disabled
+                : (controller.isClockedIn.value
+                ? Colors.orange.shade700
+                : Colors.green.shade600), // Active colors
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
-        )
-            : Icon(
-            controller.isClockedIn.value ? Icons.logout : Icons.login),
-        label: Text(
-            controller.isClockedIn.value ? 'Clock Out' : 'Clock In'),
-      ),
+
+          // --- THE KEY PART: onPressed is null when isDisabled is true ---
+          onPressed: isDisabled ? null : () => controller.toggleClockInStatus(),
+
+          icon: controller.isLoading.value
+              ? Container( // Show loading spinner if isLoading is true
+            width: 24,
+            height: 24,
+            padding: const EdgeInsets.all(2.0),
+            child: const CircularProgressIndicator(
+              color: Colors.white,
+              strokeWidth: 3,
+            ),
+          )
+              : Icon(controller.isClockedIn.value ? Icons.logout : Icons.login), // Show appropriate icon
+
+          // --- Use the determined button text ---
+          label: Text(buttonText),
+        );
+      },
     );
   }
 

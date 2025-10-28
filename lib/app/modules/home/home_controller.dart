@@ -1,3 +1,5 @@
+// File: lib/app/modules/home/home_controller.dart
+
 import 'dart:async';
 import 'package:background_fetch/background_fetch.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -5,12 +7,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:get_storage/get_storage.dart'; // Import GetStorage
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:location/location.dart';
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:intl/intl.dart';
 import '../../models/activity_log_model.dart';
-import '../../routes/app_pages.dart';
+import '../../routes/app_pages.dart'; // Ensure Routes.LOGIN is accessible
 
 class HomeController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -36,12 +39,14 @@ class HomeController extends GetxController {
   var isUserDataLoading = true.obs;
   var currentTime = ''.obs;
   var hasInitializedActivityListener = false;
+  final GetStorage _deviceStorage = GetStorage(); // Added for single-device login
+  var isLocationError = false.obs; // Added for button disabling
 
   @override
   void onInit() {
     super.onInit();
-    _fetchUserData();
-    _getCurrentLocationAndAddress();
+    _fetchUserData(); // Start listening to user data
+    _getCurrentLocationAndAddress(); // Get initial location
     _setupFCM();
     _initBackgroundFetch();
 
@@ -59,76 +64,90 @@ class HomeController extends GetxController {
     super.onClose();
   }
 
-  // --- ADD THIS FUNCTION ---
+  // --- Pull-to-refresh function ---
   Future<void> onPullToRefresh() async {
     print("Refreshing location and data...");
-    await _getCurrentLocationAndAddress(); // Re-fetch location
-    // No need to call _fetchUserData here, the location fetch handles it
+    // Re-fetch location which will update address and reset error state
+    await _getCurrentLocationAndAddress();
+    // _fetchUserData is likely already running via its listener,
+    // but calling it again ensures we have the latest if the listener missed something.
+    // However, avoid calling if already loading to prevent race conditions.
+    if (!isUserDataLoading.value) {
+      _fetchUserData(); // Re-sync user data from Firestore
+    }
   }
 
-  // --- NEW METHOD: To configure and potentially resume background tracking ---
+  // --- Background Fetch setup ---
   Future<void> _initBackgroundFetch() async {
     int status = await BackgroundFetch.configure(
       BackgroundFetchConfig(
-        minimumFetchInterval: 5, // iOS minimum interval is 15 minutes. Android can be less.
-        stopOnTerminate: false,
-        enableHeadless: true,
-        startOnBoot: true,
-        requiredNetworkType: NetworkType.ANY,
+        minimumFetchInterval:
+        5, // Android: ~5 mins, iOS: will default to ~15 mins
+        stopOnTerminate: false, // Keep running after app termination (best effort)
+        enableHeadless: true, // Enable headless task (requires separate setup)
+        startOnBoot: true, // Start after device reboot
+        requiredNetworkType: NetworkType.ANY, // Run even on cellular data
       ),
-      _onBackgroundFetch,
-      _onBackgroundFetchTimeout,
+      _onBackgroundFetch, // Task when app is in foreground/background
+      _onBackgroundFetchTimeout, // Task timeout handler
     );
     print('[BackgroundFetch] configure success: $status');
 
-    // If the user is already checked in when the app starts, resume tracking.
+    // If the user is already checked in when the app starts, ensure tracking starts/resumes.
     if (isClockedIn.value) {
       _startTracking();
     }
   }
 
-  // --- RECOMMENDED CHANGE to _onBackgroundFetch ---
+  // --- Background task logic ---
   void _onBackgroundFetch(String taskId) async {
     print("[BackgroundFetch] Event received: $taskId");
     final user = _auth.currentUser;
+    // Check if user is logged in AND locally marked as clocked in
     if (user != null && isClockedIn.value) {
-      print("[BackgroundFetch] App in foreground, user clocked in. Updating location.");
+      print("[BackgroundFetch] User logged in and clocked in. Updating location.");
       try {
         LocationData? locationData = await _getCurrentLocation();
         if (locationData != null) {
-
-          // --- 1. UPDATE "LAST SEEN" (like you do now) ---
-          // This is good for a quick "live view"
+          // Update user's last known location (for live view)
           await _firestore.collection('users').doc(user.uid).update({
-            'currentLocation': GeoPoint(locationData.latitude!, locationData.longitude!),
+            'currentLocation':
+            GeoPoint(locationData.latitude!, locationData.longitude!),
             'lastSeen': FieldValue.serverTimestamp(),
           });
 
-          // --- 2. ADD TO "BREADCRUMB TRAIL" (The new part) ---
-          // This creates a history for your admin panel
+          // Add to historical location trail
           await _firestore
               .collection('users')
               .doc(user.uid)
-              .collection('location_trail') // <-- New collection
+              .collection('location_trail')
               .add({
-            'timestamp': FieldValue.serverTimestamp(),
-            'location': GeoPoint(locationData.latitude!, locationData.longitude!),
+            'timestamp': FieldValue.serverTimestamp(), // Secure server time
+            'location':
+            GeoPoint(locationData.latitude!, locationData.longitude!),
           });
+          print("[BackgroundFetch] Location updated successfully.");
+        } else {
+          print("[BackgroundFetch] Failed to get location in background task.");
         }
-      } catch(e) {
-        print("[BackgroundFetch] Foreground location update error: $e");
+      } catch (e) {
+        print("[BackgroundFetch] Error during background location update: $e");
+        // Consider logging this error more formally (e.g., to Crashlytics)
       }
+    } else {
+      print("[BackgroundFetch] User not logged in or not clocked in, skipping location update.");
     }
+    // IMPORTANT: Tell the OS the task is finished.
     BackgroundFetch.finish(taskId);
   }
 
-  // --- NEW METHOD: Handles task timeout ---
+  // --- Background task timeout handler ---
   void _onBackgroundFetchTimeout(String taskId) {
     print("[BackgroundFetch] TIMEOUT: $taskId");
-    BackgroundFetch.finish(taskId);
+    BackgroundFetch.finish(taskId); // Must call finish even on timeout
   }
 
-  // --- NEW HELPER METHODS ---
+  // --- Helper methods to start/stop background tracking ---
   void _startTracking() {
     BackgroundFetch.start().then((int status) {
       print('[BackgroundFetch] start success: $status');
@@ -143,6 +162,7 @@ class HomeController extends GetxController {
     });
   }
 
+  // --- FCM Setup ---
   Future<void> _setupFCM() async {
     NotificationSettings settings = await _firebaseMessaging.requestPermission(
       alert: true,
@@ -153,25 +173,25 @@ class HomeController extends GetxController {
       provisional: false,
       sound: true,
     );
-    print('User granted permission: ${settings.authorizationStatus}');
+    print('User granted notification permission: ${settings.authorizationStatus}');
 
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
       try {
         String? token = await _firebaseMessaging.getToken();
         print('FCM Token: $token');
+        // Save token to Firestore AND local storage
         await _saveTokenToFirestore(token);
+        // Listen for token refreshes
         _firebaseMessaging.onTokenRefresh.listen(_saveTokenToFirestore);
       } catch (e) {
-        print('Error getting FCM token: $e');
-        if (e.toString().contains('apns-token-not-set')) {
-          print('APNS token not available yet. Will retry saving later if token refreshes.');
-        }
+        print('Error getting/saving FCM token: $e');
       }
     } else {
       print('User declined or has not accepted notification permissions');
     }
   }
 
+  // --- Save FCM Token (including local save for single-device login) ---
   Future<void> _saveTokenToFirestore(String? token) async {
     if (token == null || token.isEmpty) {
       print('Attempted to save null or empty token.');
@@ -183,11 +203,18 @@ class HomeController extends GetxController {
       return;
     }
     try {
+      // Save token locally for comparison
+      await _deviceStorage.write('fcmToken', token);
+      print('FCM Token saved locally.');
+
+      // Check if Firestore already has the same token
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
       if (userDoc.exists && userDoc.data()?['fcmToken'] == token) {
-        print('FCM Token is already up-to-date.');
+        print('FCM Token is already up-to-date in Firestore.');
         return;
       }
+
+      // Update Firestore (this triggers check on other devices)
       await _firestore
           .collection('users')
           .doc(user.uid)
@@ -198,19 +225,24 @@ class HomeController extends GetxController {
     }
   }
 
+  // --- Update live clock time ---
   void _updateTime() {
     final String formattedTime =
     DateFormat('EEE, MMM d | hh:mm:ss a').format(DateTime.now());
     currentTime.value = formattedTime;
   }
 
+  // --- Google Map Initialization ---
   void onMapCreated(GoogleMapController controller) {
     mapController = controller;
-    _updateMapLocation();
+    // Update map location if LatLng is already available
+    if (currentLatLng.value != null) {
+      _updateMapLocation();
+    }
   }
 
+  // --- Update Map View (with null checks) ---
   void _updateMapLocation() {
-    // Add a check to ensure the controller exists and the location is valid
     if (mapController != null && currentLatLng.value != null) {
       markers.value = {
         Marker(
@@ -220,8 +252,7 @@ class HomeController extends GetxController {
         ),
       };
       try {
-        // Now it's safer to call animateCamera
-        mapController!.animateCamera( // Use ! because we checked for null
+        mapController!.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
               target: currentLatLng.value!,
@@ -230,28 +261,75 @@ class HomeController extends GetxController {
           ),
         );
       } catch (e) {
-        // Catch potential errors if the controller becomes invalid
-        // during the animation attempt.
-        print("Error animating map camera: $e");
+        print("Error animating map camera in _updateMapLocation: $e");
       }
     } else {
-      print("Map controller not ready or location not available for map update.");
+      print(
+          "Map controller not ready or location not available for map update.");
     }
   }
 
+  // --- Fetch User Data (with single-device login check) ---
   void _fetchUserData() {
     isUserDataLoading.value = true;
     final user = _auth.currentUser;
     if (user != null) {
+      // Set initial name guess while loading
       userName.value = user.displayName ?? user.email ?? 'Staff Member';
-      _userDocSubscription = _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
+
+      // Cancel previous listener if exists
+      _userDocSubscription?.cancel();
+
+      _userDocSubscription = _firestore
+          .collection('users')
+          .doc(user.uid)
+          .snapshots()
+          .listen((doc) async { // Make listener async for await
         if (doc.exists && doc.data() != null) {
           final data = doc.data()!;
+
+          // --- Single-Device Login Security Check ---
+          final String? localToken = _deviceStorage.read('fcmToken');
+          final String? cloudToken = data['fcmToken'];
+
+          if (localToken != null &&
+              cloudToken != null &&
+              localToken.isNotEmpty &&
+              cloudToken.isNotEmpty &&
+              localToken != cloudToken) {
+
+            print('Newer login detected on another device. Signing out this device.');
+            // Cancel this listener before doing anything else
+            _userDocSubscription?.cancel();
+
+            // Force clock-out in Firestore IF currently clocked in locally
+            if (isClockedIn.value) { // Check local state before calling
+              await _forceClockOutInFirestore(user.uid); // MUST await this
+            }
+
+            // Proceed with sign out (no await needed for UI update)
+            signOut();
+
+            Get.snackbar(
+              'Session Expired',
+              'You have been logged in on another device.',
+              snackPosition: SnackPosition.BOTTOM,
+              backgroundColor: Colors.orange,
+              colorText: Colors.white,
+            );
+            isUserDataLoading.value = false; // Ensure loading state is updated
+            return; // IMPORTANT: Stop processing this outdated document
+          }
+          // --- End Security Check ---
+
+          // Update user name
           userName.value = data['name'] ?? user.email ?? 'Staff Member';
 
+          // Handle clock-in status and background tracking
           bool wasClockedIn = isClockedIn.value;
-          bool isNowClockedIn = data['isClockedIn'] ?? false;
-          isClockedIn.value = isNowClockedIn;
+          // Check both fields for safety, preferring isClockedIn
+          bool isNowClockedIn = data['isClockedIn'] ?? data['isCheckedIn'] ?? false;
+          isClockedIn.value = isNowClockedIn; // Update local state
 
           if (wasClockedIn != isNowClockedIn) {
             if (isNowClockedIn) {
@@ -260,106 +338,176 @@ class HomeController extends GetxController {
               _stopTracking();
             }
           }
+        } else {
+          // User document doesn't exist (maybe deleted?)
+          print("User document does not exist for uid: ${user.uid}");
+          _userDocSubscription?.cancel(); // Stop listening
+          // Decide if you want to sign out the user automatically here
+          // signOut();
+          isUserDataLoading.value = false;
+          return; // Stop processing
         }
+
+        // Initialize activity listener only ONCE
         if (!hasInitializedActivityListener) {
           _listenToActivityLogs();
           hasInitializedActivityListener = true;
         }
-        isUserDataLoading.value = false;
+        isUserDataLoading.value = false; // Mark loading complete on success
+
+      }, onError: (error) {
+        // Handle errors fetching user data
+        print("Error listening to user data: $error");
+        isUserDataLoading.value = false; // Mark loading complete on error
+        Get.snackbar(
+          'Database Error',
+          'Could not sync user status. Please check connection.',
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+        );
       });
     } else {
+      // User is not logged in
       isUserDataLoading.value = false;
     }
   }
 
+  // --- Set Date Filter ---
   void setFilter(String newFilter) {
     if (dateFilter.value == newFilter) return;
     dateFilter.value = newFilter;
-    _listenToActivityLogs();
+    _listenToActivityLogs(); // Re-fetch logs with the new filter (if applicable)
   }
 
+  // --- Listen to Activity Logs ---
   void _listenToActivityLogs() {
-    _activityStreamSubscription?.cancel();
+    _activityStreamSubscription?.cancel(); // Cancel previous listener
     final user = _auth.currentUser;
     if (user == null) return;
 
-    // This query is now 100% secure.
-    // It sorts by the un-fakeable server timestamp and limits to 50 logs.
+    // Query for recent activity logs, ordered by server timestamp
     Query query = _firestore
         .collection('users')
         .doc(user.uid)
         .collection('activity_logs')
         .orderBy('timestamp', descending: true)
-        .limit(50); // Added limit for performance
-
-    // The vulnerable filter code has been removed.
+        .limit(50); // Limit results for performance
 
     _activityStreamSubscription = query.snapshots().listen((snapshot) {
       List<ActivityLog> newLogs = snapshot.docs.map((doc) {
         final log = ActivityLog.fromFirestore(doc);
+        // Fetch address asynchronously for each log
         _fetchAddressForLog(log);
         return log;
       }).toList();
 
       activityLogs.value = newLogs;
 
-      if (activityLogs.isNotEmpty) {
-        lastActivityTime.value =
-            DateFormat('hh:mm a').format(activityLogs.first.timestamp.toDate());
+      // Update last activity time display
+      if (activityLogs.isNotEmpty && activityLogs.first.timestamp != null) {
+        try {
+          lastActivityTime.value =
+              DateFormat('hh:mm a').format(activityLogs.first.timestamp!.toDate());
+        } catch (e) {
+          print("Error formatting last activity timestamp: ${activityLogs.first.timestamp}");
+          lastActivityTime.value = 'Error';
+        }
       } else {
         lastActivityTime.value = 'N/A';
       }
+    }, onError: (error){
+      print("Error listening to activity logs: $error");
+      // Optionally show an error to the user
     });
   }
 
+  // --- Fetch Address for a Single Log ---
   Future<void> _fetchAddressForLog(ActivityLog log) async {
+    // Prevent fetching if already fetched or if location is invalid
+    if (log.address.value != 'Loading address...' || log.location == null) return;
+
     try {
       List<geocoding.Placemark> placemarks =
       await geocoding.placemarkFromCoordinates(
-          log.location.latitude, log.location.longitude);
+          log.location!.latitude, log.location!.longitude);
       if (placemarks.isNotEmpty) {
         final place = placemarks.first;
-        log.address.value = "${place.street}, ${place.locality}";
+        // Construct a concise address string
+        log.address.value =
+        "${place.street ?? ''}${place.street != null && place.locality != null ? ', ' : ''}${place.locality ?? ''}";
+        if (log.address.value.isEmpty) {
+          log.address.value = "Address details not found.";
+        }
       } else {
         log.address.value = "Address not found.";
       }
     } catch (e) {
-      log.address.value = "Could not get address.";
+      print("Error fetching address for log: $e");
+      // Handle specific errors like network error
+      if (e.toString().contains('kCLErrorDomain Code=2')) {
+        log.address.value = "Network error getting address.";
+      } else {
+        log.address.value = "Could not get address.";
+      }
     }
   }
 
+  // --- Get Initial Location and Address ---
   Future<void> _getCurrentLocationAndAddress() async {
     currentAddress.value = 'Getting location...';
-    currentLatLng.value = null;
+    // DO NOT set currentLatLng.value = null; here - causes map reload
+    isLocationError.value = false; // Reset error state
+
     try {
       LocationData? locationData = await _getCurrentLocation();
       if (locationData != null &&
           locationData.latitude != null &&
           locationData.longitude != null) {
+
         currentLatLng.value =
             LatLng(locationData.latitude!, locationData.longitude!);
-        _updateMapLocation();
+        _updateMapLocation(); // Update map view
 
-        List<geocoding.Placemark> placemarks =
-        await geocoding.placemarkFromCoordinates(
-            locationData.latitude!, locationData.longitude!);
-        if (placemarks.isNotEmpty) {
-          final place = placemarks.first;
-          currentAddress.value =
-          "${place.street}, ${place.locality}, ${place.country}";
-        } else {
-          currentAddress.value = "Address not found.";
+        // Fetch address
+        try {
+          List<geocoding.Placemark> placemarks =
+          await geocoding.placemarkFromCoordinates(
+              locationData.latitude!, locationData.longitude!);
+          if (placemarks.isNotEmpty) {
+            final place = placemarks.first;
+            currentAddress.value =
+            "${place.street ?? ''}${place.street != null && place.locality != null ? ', ' : ''}${place.locality ?? ''}, ${place.country ?? ''}";
+            if (currentAddress.value.trim() == ',') { // Handle empty parts
+              currentAddress.value = "Address details not found.";
+            }
+          } else {
+            currentAddress.value = "Address not found.";
+          }
+        } catch (e) {
+          print("Error getting address in _getCurrentLocationAndAddress: $e");
+          currentAddress.value = "Could not get address.";
+          // Consider setting location error true if address is crucial here
+          // isLocationError.value = true;
         }
+        isLocationError.value = false; // Location fetch successful
+
       } else {
+        // Location fetch failed (permission denied, service off, etc.)
         currentAddress.value = "Location not available.";
-        currentLatLng.value = null;
+        // Do NOT set currentLatLng to null, keep the last known value if any
+        isLocationError.value = true;
       }
     } catch (e) {
+      // Exception during location fetch
+      print("Error in _getCurrentLocationAndAddress: $e");
       currentAddress.value = "Could not get location.";
-      currentLatLng.value = null;
+      // Do NOT set currentLatLng to null
+      isLocationError.value = true;
     }
   }
 
+  // --- Toggle Clock-In/Out Status (Corrected) ---
   Future<void> toggleClockInStatus() async {
     isLoading.value = true;
     final user = _auth.currentUser;
@@ -376,70 +524,63 @@ class HomeController extends GetxController {
       if (locationData == null) {
         Get.snackbar('Location Error',
             'Could not get location. Please enable GPS and try again.');
+        isLocationError.value = true; // Set error state if location fails
         isLoading.value = false;
         return;
       }
+      // If location succeeds, reset error state
+      isLocationError.value = false;
 
-      // --- FIRESTORE LOGIC (NO CHANGE) ---
-      await _firestore.collection('users').doc(user.uid).update({
-        // ... your updates
-      });
+      // --- Update user's main doc ---
+      await _firestore.collection('users').doc(user.uid).set({
+        'isClockedIn': newStatus,
+        'currentLocation':
+        GeoPoint(locationData.latitude!, locationData.longitude!),
+        'lastSeen': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // --- Add to activity subcollection ---
       await _firestore
           .collection('users')
           .doc(user.uid)
           .collection('activity_logs')
           .add({
-        // ... your log data
+        'status': newStatus ? 'clocked-in' : 'clocked-out',
+        'timestamp': FieldValue.serverTimestamp(), // *** USE SERVER TIME ***
+        'location':
+        GeoPoint(locationData.latitude!, locationData.longitude!),
       });
-      // --- END FIRESTORE LOGIC ---
 
-
-      // --- START OF CHANGES ---
-      // ADD A CHECK HERE before trying to use the map controller
-      if (mapController == null) {
-        print(
-            "Map controller is null before updating map in toggleCheckInStatus. Skipping animation.");
-        // Update LatLng and Address anyway, just don't animate map
-        currentLatLng.value =
-            LatLng(locationData.latitude!, locationData.longitude!);
-        try {
-          List<geocoding.Placemark> placemarks =
-          await geocoding.placemarkFromCoordinates(
-              locationData.latitude!, locationData.longitude!);
-          if (placemarks.isNotEmpty) {
-            final place = placemarks.first;
-            currentAddress.value =
-            "${place.street}, ${place.locality}, ${place.country}";
-          } else {
-            currentAddress.value = "Address not found.";
+      // --- Update UI Directly (No _getCurrentLocationAndAddress call) ---
+      currentLatLng.value =
+          LatLng(locationData.latitude!, locationData.longitude!);
+      // Update address text
+      try {
+        List<geocoding.Placemark> placemarks =
+        await geocoding.placemarkFromCoordinates(
+            locationData.latitude!, locationData.longitude!);
+        if (placemarks.isNotEmpty) {
+          final place = placemarks.first;
+          currentAddress.value =
+          "${place.street ?? ''}${place.street != null && place.locality != null ? ', ' : ''}${place.locality ?? ''}, ${place.country ?? ''}";
+          if (currentAddress.value.trim() == ',') {
+            currentAddress.value = "Address details not found.";
           }
-        } catch (e) {
-          print("Error getting address after toggle (map controller null): $e");
-          currentAddress.value = "Could not update address.";
+        } else {
+          currentAddress.value = "Address not found.";
         }
-      } else {
-        // Map controller exists, proceed with map update and animation
-        currentLatLng.value =
-            LatLng(locationData.latitude!, locationData.longitude!);
-        _updateMapLocation(); // This includes the animation
-
-        try {
-          List<geocoding.Placemark> placemarks =
-          await geocoding.placemarkFromCoordinates(
-              locationData.latitude!, locationData.longitude!);
-          if (placemarks.isNotEmpty) {
-            final place = placemarks.first;
-            currentAddress.value =
-            "${place.street}, ${place.locality}, ${place.country}";
-          } else {
-            currentAddress.value = "Address not found.";
-          }
-        } catch (e) {
-          print("Error getting address after toggle: $e");
+      } catch (e) {
+        print("Error getting address after toggle: $e");
+        if (e.toString().contains('kCLErrorDomain Code=2')) {
+          currentAddress.value = "Network error getting address.";
+        } else {
           currentAddress.value = "Could not update address.";
         }
       }
-      // --- END OF CHANGES ---
+      // Update map view (includes null check for mapController)
+      _updateMapLocation();
+      // --- End Direct Update ---
+
 
       Get.snackbar(
         'Success',
@@ -458,45 +599,49 @@ class HomeController extends GetxController {
     }
   }
 
+  // --- Get Current Location (with mock check & permission handling) ---
   Future<LocationData?> _getCurrentLocation() async {
     Location location = Location();
     bool serviceEnabled;
     PermissionStatus permissionGranted;
+
+    // Check if location service is enabled
     serviceEnabled = await location.serviceEnabled();
     if (!serviceEnabled) {
       serviceEnabled = await location.requestService();
       if (!serviceEnabled) {
-        return null;
+        Get.snackbar('GPS Error', 'Please enable location services.', snackPosition: SnackPosition.BOTTOM);
+        return null; // Service not enabled
       }
     }
 
+    // Check location permission status
     permissionGranted = await location.hasPermission();
     if (permissionGranted == PermissionStatus.denied) {
       permissionGranted = await location.requestPermission();
       if (permissionGranted != PermissionStatus.granted) {
+        Get.snackbar('Permission Error', 'Location permission denied.', snackPosition: SnackPosition.BOTTOM);
         return null; // User denied the request
       }
-    }
-    // --- ADD THIS ELSE IF BLOCK ---
-    else if (permissionGranted == PermissionStatus.deniedForever) {
-      // User has permanently denied permission.
+    } else if (permissionGranted == PermissionStatus.deniedForever) {
       debugPrint("Location permission permanently denied.");
       Get.snackbar(
         'Permission Error',
-        'Location permission is permanently denied. Please go to your app settings to enable it.',
+        'Location permission is permanently denied. Please go to app settings to enable it.',
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.red,
         colorText: Colors.white,
+        duration: const Duration(seconds: 5), // Longer duration for settings message
       );
-      return null;
+      return null; // Permanently denied
     }
-    // --- END OF ADDED BLOCK ---
 
+    // Get location if service and permissions are okay
     try {
-      // Get location (with your 30s timeout)
-      final locationData = await location.getLocation().timeout(const Duration(seconds: 30));
+      final locationData =
+      await location.getLocation().timeout(const Duration(seconds: 30));
 
-      // --- This check is correct ---
+      // Mock location check
       if (locationData.isMock == true) {
         debugPrint("Mock location detected. Rejecting.");
         Get.snackbar(
@@ -506,17 +651,15 @@ class HomeController extends GetxController {
           backgroundColor: Colors.red,
           colorText: Colors.white,
         );
-        return null; // Reject the fake location
+        return null; // Reject mock location
       }
-      // --- END OF CHECK ---
-
       return locationData;
 
     } on TimeoutException {
       debugPrint("Location request timed out.");
       Get.snackbar(
         'Location Error',
-        'Could not get location. Request timed out.',
+        'Could not get location: Request timed out.',
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.orange,
         colorText: Colors.white,
@@ -524,60 +667,70 @@ class HomeController extends GetxController {
       return null;
     } catch (e) {
       debugPrint("Error getting location: $e");
+      Get.snackbar(
+        'Location Error',
+        'An unknown error occurred while getting location.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
       return null;
     }
   }
 
+  // --- Sign Out (with force clock-out) ---
   Future<void> signOut() async {
-    final user = _auth.currentUser; // Get user before potential sign out
-    final wasClockedIn = isClockedIn.value; // Check status before sign out
+    final user = _auth.currentUser;
+    final wasClockedIn = isClockedIn.value;
 
     _stopTracking(); // Stop background fetch first
 
-    // --- ADD THIS ---
+    // Ensure Firestore reflects clock-out if user was clocked in
     if (user != null && wasClockedIn) {
-      // If user exists and was clocked in, ensure Firestore is updated
       await _forceClockOutInFirestore(user.uid);
     }
-    // --- END ADD ---
 
     await _auth.signOut();
-    // Clear local token on manual sign out? Optional.
+    // Optional: Clear local token on manual sign out if desired
     // await _deviceStorage.remove('fcmToken');
-    Get.offAllNamed(Routes.LOGIN);
+    Get.offAllNamed(Routes.LOGIN); // Navigate to login screen
   }
 
-  // ADD THIS FUNCTION
+  // --- Force Clock-Out in Firestore (for single-device logout) ---
   Future<void> _forceClockOutInFirestore(String userId) async {
     print("Forcing clock-out in Firestore for user: $userId");
     try {
-      // Get current location for the log (optional but good)
+      // Attempt to get current location for the log entry
       LocationData? locationData = await _getCurrentLocation();
-      GeoPoint? lastLocation = (locationData != null)
+      GeoPoint? lastLocation = (locationData != null && locationData.latitude != null && locationData.longitude != null)
           ? GeoPoint(locationData.latitude!, locationData.longitude!)
-          : null; // Use null if location fails
+          : null; // Use null if location fails or is incomplete
 
-      // Update the main user document
+      // Update the main user document to clocked out state
       await _firestore.collection('users').doc(userId).update({
+        'isClockedIn': false,
+        // Update isCheckedIn as well if you use it interchangeably
         'isCheckedIn': false,
-        'isClockedIn': false, // Ensure consistency
-        // Optionally update currentLocation and lastSeen here too
-        // 'currentLocation': lastLocation,
+        // Optionally update last known location and seen time
+        // 'currentLocation': lastLocation ?? FieldValue.delete(), // Or delete if null
         // 'lastSeen': FieldValue.serverTimestamp(),
       });
 
-      // Add the activity log
-      await _firestore.collection('users').doc(userId).collection('activity_logs').add({
-        'status': 'checked-out',
-        'timestamp': FieldValue.serverTimestamp(), // Use server time
-        'location': lastLocation,
-        'reason': 'auto_sign_out_new_device' // Add a reason for clarity
+      // Add the automatic clock-out activity log
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('activity_logs')
+          .add({
+        'status': 'clocked-out', // Ensure consistent status naming
+        'timestamp': FieldValue.serverTimestamp(), // Secure server time
+        'location': lastLocation, // Can be null
+        'reason': 'auto_sign_out_new_device' // Indicate why this happened
       });
       print("Forced clock-out successful in Firestore.");
     } catch (e) {
       print("Error during forced clock-out in Firestore: $e");
-      // Handle error if necessary, maybe log it differently
+      // Log this error, as it might leave the user state inconsistent
     }
   }
-// END OF NEW FUNCTION
-}
+} // End of HomeController
