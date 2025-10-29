@@ -9,7 +9,7 @@ import 'app/routes/app_pages.dart';
 import 'app/theme/app_theme.dart';
 import 'firebase_options.dart';
 
-// --- THIS IS THE BACKGROUND TASK HANDLER ---
+// --- THIS IS THE BACKGROUND TASK HANDLER --- 4
 // This function will be called by the OS when it's time to run our background task.
 @pragma('vm:entry-point')
 void backgroundFetchHeadlessTask(HeadlessTask task) async {
