@@ -1,3 +1,4 @@
+// lib/app/models/activity_log_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
 

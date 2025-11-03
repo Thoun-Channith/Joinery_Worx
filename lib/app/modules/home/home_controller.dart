@@ -1,5 +1,4 @@
-// File: lib/app/modules/home/home_controller.dart
-
+// lib/app/modules/home/home_controller.dart
 import 'dart:async';
 import 'package:background_fetch/background_fetch.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -292,35 +291,32 @@ class HomeController extends GetxController {
           final String? localToken = _deviceStorage.read('fcmToken');
           final String? cloudToken = data['fcmToken'];
 
-          if (localToken != null &&
-              cloudToken != null &&
-              localToken.isNotEmpty &&
+          if (cloudToken != null &&
               cloudToken.isNotEmpty &&
-              localToken != cloudToken) {
+              localToken != null &&
+              localToken.isNotEmpty &&
+              cloudToken != localToken) {
 
-            print('Newer login detected on another device. Signing out this device.');
-            // Cancel this listener before doing anything else
+            print('Another device logged in. Logging out this device...');
+
             _userDocSubscription?.cancel();
 
-            // Force clock-out in Firestore IF currently clocked in locally
-            if (isClockedIn.value) { // Check local state before calling
-              await _forceClockOutInFirestore(user.uid); // MUST await this
+            if (isClockedIn.value) {
+              await _forceClockOutInFirestore(user.uid);
             }
 
-            // Proceed with sign out (no await needed for UI update)
-            signOut();
+            await _auth.signOut();
+            await _deviceStorage.remove('fcmToken'); // clear local token
 
+            Get.offAllNamed(Routes.LOGIN);
             Get.snackbar(
               'Session Expired',
               'You have been logged in on another device.',
-              snackPosition: SnackPosition.BOTTOM,
               backgroundColor: Colors.orange,
               colorText: Colors.white,
             );
-            isUserDataLoading.value = false; // Ensure loading state is updated
-            return; // IMPORTANT: Stop processing this outdated document
+            return;
           }
-          // --- End Security Check ---
 
           // Update user name
           userName.value = data['name'] ?? user.email ?? 'Staff Member';

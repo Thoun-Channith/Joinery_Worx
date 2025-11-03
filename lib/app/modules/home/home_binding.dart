@@ -1,3 +1,4 @@
+// lib/app/modules/home/home_binding.dart
 import 'package:get/get.dart';
 import '../auth/auth_controller.dart';
 import 'home_controller.dart';

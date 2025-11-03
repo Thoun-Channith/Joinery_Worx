@@ -1,5 +1,8 @@
+// lib/app/routes/app_pages.dart
 import 'package:get/get.dart';
 
+import '../modules/admin/admin_binding.dart';
+import '../modules/admin/admin_view.dart';
 import '../modules/auth/auth_binding.dart';
 import '../modules/auth/login_view.dart';
 import '../modules/home/home_binding.dart';
@@ -8,7 +11,6 @@ import '../modules/splash/splash_binding.dart';
 import '../modules/splash/splash_view.dart';
 part 'app_routes.dart';
 
-// lib/app/routes/app_pages.dart
 class AppPages {
   static const INITIAL = Routes.SPLASH;
 
@@ -28,6 +30,12 @@ class AppPages {
       page: () => HomeView(),
       binding: HomeBinding(),
     ),
+    GetPage(
+      name: '/admin',
+      page: () => const AdminView(),
+      binding: AdminBinding(),
+    ),
+
   ];
 
 }

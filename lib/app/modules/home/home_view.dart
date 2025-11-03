@@ -1,3 +1,4 @@
+// lib/app/modules/home/home_view.dart
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart'; // <-- Map import
@@ -16,6 +17,10 @@ class HomeView extends GetView<HomeController> {
       appBar: AppBar(
         title: const Text('Staff Dashboard'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.admin_panel_settings),
+            onPressed: () => Get.toNamed('/admin'),
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign Out',
@@ -223,9 +228,9 @@ class HomeView extends GetView<HomeController> {
         if (controller.currentLatLng.value == null || controller.isLocationError.value) {
           buttonText = 'Getting Location...'; // Show this while waiting for location or if error
         } else if (controller.isClockedIn.value) {
-          buttonText = 'Check Out';
+          buttonText = 'Clock Out';
         } else {
-          buttonText = 'Check In';
+          buttonText = 'Clock In';
         }
 
         return ElevatedButton.icon(
@@ -315,7 +320,7 @@ class HomeView extends GetView<HomeController> {
         itemCount: controller.activityLogs.length,
         itemBuilder: (context, index) {
           final ActivityLog log = controller.activityLogs[index];
-          final isCheckIn = log.status == 'clocked-in';
+          final isClockIn = log.status == 'clocked-in';
           final formattedTime =
           DateFormat('EEE, MMM d, hh:mm a').format(log.timestamp.toDate());
 
@@ -323,10 +328,10 @@ class HomeView extends GetView<HomeController> {
             margin: const EdgeInsets.symmetric(vertical: 4),
             child: ListTile(
               leading: Icon(
-                isCheckIn ? Icons.login : Icons.logout,
-                color: isCheckIn ? Colors.green : Colors.orange,
+                isClockIn ? Icons.login : Icons.logout,
+                color: isClockIn ? Colors.green : Colors.orange,
               ),
-              title: Text(isCheckIn ? 'Clocked In' : 'Clocked Out'),
+              title: Text(isClockIn ? 'Clocked In' : 'Clocked Out'),
               subtitle: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

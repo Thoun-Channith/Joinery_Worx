@@ -1,3 +1,4 @@
+// lib/app/modules/auth/auth_binding.dart
 import 'package:get/get.dart';
 import 'auth_controller.dart';
 
