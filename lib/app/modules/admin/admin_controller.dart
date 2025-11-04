@@ -1,3 +1,4 @@
+// lib/app/modules/admin/admin_controller.dart
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
@@ -19,7 +20,7 @@ class AdminController extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    _listenToStaffData();
+    _listenToStaffData(); // Use the private method on init
   }
 
   @override
@@ -29,11 +30,23 @@ class AdminController extends GetxController {
     super.onClose();
   }
 
+  // --- ADD THIS NEW PUBLIC onRefresh FUNCTION ---
+  Future<void> onRefresh() async {
+    // This simply re-triggers the stream listener.
+    // The stream itself will handle updating the UI.
+    _listenToStaffData();
+    // We can return a completed Future immediately.
+    return Future.value();
+  }
+  // --- END OF NEW FUNCTION ---
+
   void onMapCreated(GoogleMapController controller) {
     mapController = controller;
   }
 
+  // Rename this back to a private method (with an underscore)
   void _listenToStaffData() {
+    _usersStream?.cancel(); // Cancel any existing stream before starting a new one
     _usersStream = _firestore
         .collection('users')
         .where('role', isEqualTo: 'staff') // Only staff
@@ -44,14 +57,16 @@ class AdminController extends GetxController {
           .where((e) => e['isClockedIn'] == true)
           .length;
 
+      // Clear old markers before rebuilding
       markers.clear();
       staffList.value = [];
 
       for (var doc in snapshot.docs) {
         var data = doc.data();
-
+        bool isClockedIn = data['isClockedIn'] ?? false;
         GeoPoint? gp = data['currentLocation'];
-        if (gp != null) {
+
+        if (gp != null && isClockedIn == true) {
           LatLng pos = LatLng(gp.latitude, gp.longitude);
 
           markers.add(
@@ -60,15 +75,17 @@ class AdminController extends GetxController {
               position: pos,
               infoWindow: InfoWindow(
                 title: data['name'],
-                snippet: data['isClockedIn'] ? 'Clocked In' : 'Clocked Out',
+                snippet: 'Clocked In',
               ),
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
             ),
           );
         }
 
         staffList.add({
+          'id': doc.id,
           'name': data['name'] ?? '',
-          'isClockedIn': data['isClockedIn'] ?? false,
+          'isClockedIn': isClockedIn,
           'lastSeen': data['lastSeen'],
           'location': gp,
         });

@@ -3,6 +3,8 @@ import 'package:get/get.dart';
 
 import '../modules/admin/admin_binding.dart';
 import '../modules/admin/admin_view.dart';
+import '../modules/admin/staff_history_binding.dart'; // <-- ADD THIS
+import '../modules/admin/staff_history_view.dart'; // <-- ADD THIS
 import '../modules/auth/auth_binding.dart';
 import '../modules/auth/login_view.dart';
 import '../modules/home/home_binding.dart';
@@ -31,11 +33,16 @@ class AppPages {
       binding: HomeBinding(),
     ),
     GetPage(
-      name: '/admin',
+      name: Routes.ADMIN, // <-- Use Routes.ADMIN
       page: () => const AdminView(),
       binding: AdminBinding(),
     ),
-
+    // --- ADD THIS NEW GETPAGE ---
+    GetPage(
+      name: Routes.STAFF_HISTORY,
+      page: () => StaffHistoryView(),
+      binding: StaffHistoryBinding(),
+    ),
+    // --- END OF ADDITION ---
   ];
-
 }

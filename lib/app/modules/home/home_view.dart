@@ -1,7 +1,7 @@
 // lib/app/modules/home/home_view.dart
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart'; // <-- Map import
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../models/activity_log_model.dart';
 import 'home_controller.dart';
@@ -15,12 +15,22 @@ class HomeView extends GetView<HomeController> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: // --- WRAP THIS ICONBUTTON IN AN Obx ---
+        Obx(() {
+          if (controller.userRole.value == 'admin') {
+            // Only show the button if the user is an admin
+            return IconButton(
+              icon: const Icon(Icons.assignment_ind_sharp),
+              onPressed: () => Get.toNamed('/admin'),
+            );
+          } else {
+            // Otherwise, show an empty box
+            return const SizedBox.shrink();
+          }
+        }),
+        // --- END OF MODIFICATION ---,
         title: const Text('Staff Dashboard'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.admin_panel_settings),
-            onPressed: () => Get.toNamed('/admin'),
-          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign Out',
@@ -29,7 +39,7 @@ class HomeView extends GetView<HomeController> {
         ],
       ),
       body: RefreshIndicator(
-          onRefresh: controller.onPullToRefresh,
+        onRefresh: controller.onPullToRefresh,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           child: Padding(
