@@ -120,7 +120,7 @@ class HomeView extends GetView<HomeController> {
               zoom: 16.0,
             ),
             markers: controller.markers.value,
-            myLocationEnabled: false,
+            myLocationEnabled: true,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: true,
           ),

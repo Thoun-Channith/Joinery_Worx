@@ -4,11 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geocoding/geocoding.dart' as geo;
-import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:permission_handler/permission_handler.dart' as perm_handler;
 import 'package:location/location.dart' as loc;
 
 import '../../models/activity_log_model.dart';
@@ -36,6 +35,9 @@ class HomeController extends GetxController {
   var dateFilter = 'Last 7 Days'.obs;
   var currentTime = ''.obs;
 
+  // Prevent repeated location refresh
+  var hasLoadedLocation = false.obs;
+
   GoogleMapController? mapController;
   Timer? _clockTimer;
   StreamSubscription? _userStreamSubscription;
@@ -56,16 +58,37 @@ class HomeController extends GetxController {
     super.onClose();
   }
 
+  // ---------------- LOCATION TRACKING ----------------
   void _startLocationTracking() async {
+    if (_locationSubscription != null) return; // ✅ Prevent duplicate subscriptions
+
     final user = _auth.currentUser;
     if (user == null) return;
 
     var permission = await location.hasPermission();
-    if (permission == loc.PermissionStatus.denied) {
+    if (permission == loc.PermissionStatus.denied ||
+        permission == loc.PermissionStatus.deniedForever) {
+      Get.snackbar(
+        "Background Permission Error",
+        "Background location is needed. Please enable 'Always Allow' in Settings.",
+      );
       permission = await location.requestPermission();
-      if (permission != loc.PermissionStatus.granted) {
-        Get.snackbar("Permission Error", "Location permission is required for tracking.");
+      if (permission != loc.PermissionStatus.granted &&
+          permission != loc.PermissionStatus.grantedLimited) {
         return;
+      }
+    }
+
+    if (GetPlatform.isIOS) {
+      var backgroundPermission = await location.hasPermission();
+      if (backgroundPermission == loc.PermissionStatus.granted) {
+        backgroundPermission = await location.requestPermission();
+      }
+      if (backgroundPermission != loc.PermissionStatus.granted) {
+        Get.snackbar(
+          "Background Permission Error",
+          "Please enable 'Always Allow' in Settings for background tracking.",
+        );
       }
     }
 
@@ -81,25 +104,28 @@ class HomeController extends GetxController {
       distanceFilter: 0,
     );
 
-    _locationSubscription = location.onLocationChanged.listen((loc.LocationData locationData) {
-      if (locationData.latitude == null || locationData.longitude == null) return;
+    _locationSubscription =
+        location.onLocationChanged.listen((loc.LocationData locationData) {
+          if (locationData.latitude == null || locationData.longitude == null) return;
 
-      final newLocation = GeoPoint(locationData.latitude!, locationData.longitude!);
-      final userDocRef = _firestore.collection('users').doc(user.uid);
-      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-      final historyDocRef = userDocRef.collection('location_history').doc(today);
+          final newLocation =
+          GeoPoint(locationData.latitude!, locationData.longitude!);
+          final userDocRef = _firestore.collection('users').doc(user.uid);
+          final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+          final historyDocRef =
+          userDocRef.collection('location_history').doc(today);
 
-      userDocRef.update({
-        'currentLocation': newLocation,
-        'lastSeen': FieldValue.serverTimestamp(),
-      });
+          userDocRef.update({
+            'currentLocation': newLocation,
+            'lastSeen': FieldValue.serverTimestamp(),
+          });
 
-      historyDocRef.set({
-        'path': FieldValue.arrayUnion([
-          {'lat': newLocation.latitude, 'lng': newLocation.longitude}
-        ]),
-      }, SetOptions(merge: true));
-    });
+          historyDocRef.set({
+            'path': FieldValue.arrayUnion([
+              {'lat': newLocation.latitude, 'lng': newLocation.longitude}
+            ]),
+          }, SetOptions(merge: true));
+        });
   }
 
   void _stopLocationTracking() {
@@ -108,22 +134,26 @@ class HomeController extends GetxController {
     location.enableBackgroundMode(enable: false);
   }
 
+  // ---------------- CLOCK ----------------
   void _startClock() {
-    currentTime.value = DateFormat('EEE, MMM d, hh:mm:ss a').format(DateTime.now());
+    currentTime.value =
+        DateFormat('EEE, MMM d, hh:mm:ss a').format(DateTime.now());
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      currentTime.value = DateFormat('EEE, MMM d, hh:mm:ss a').format(DateTime.now());
+      currentTime.value =
+          DateFormat('EEE, MMM d, hh:mm:ss a').format(DateTime.now());
     });
   }
 
+  // ---------------- UI EVENTS ----------------
   Future<void> onPullToRefresh() async {
     await _getCurrentLocation();
-    _fetchActivityLogs();
   }
 
   void onMapCreated(GoogleMapController controller) {
     mapController = controller;
   }
 
+  // ---------------- FIRESTORE USER DATA ----------------
   void _fetchUserData() {
     final user = _auth.currentUser;
     if (user == null) {
@@ -132,51 +162,67 @@ class HomeController extends GetxController {
     }
 
     _userStreamSubscription?.cancel();
-    _userStreamSubscription = _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
-      if (doc.exists) {
-        var data = doc.data()!;
-        userName.value = data['name'] ?? 'User';
-        userRole.value = data['role'] ?? 'staff';
-        isClockedIn.value = data['isClockedIn'] ?? false;
+    _userStreamSubscription =
+        _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
+          if (doc.exists) {
+            var data = doc.data()!;
+            userName.value = data['name'] ?? 'User';
+            userRole.value = data['role'] ?? 'staff';
+            isClockedIn.value = data['isClockedIn'] ?? false;
 
-        if (isClockedIn.value && _locationSubscription == null) {
-          _startLocationTracking();
-        } else if (!isClockedIn.value && _locationSubscription != null) {
-          _stopLocationTracking();
-        }
+            if (isClockedIn.value && _locationSubscription == null) {
+              _startLocationTracking();
+            } else if (!isClockedIn.value && _locationSubscription != null) {
+              _stopLocationTracking();
+            }
 
-        Timestamp? lastTimestamp = data['lastActivityTimestamp'];
-        lastActivityTime.value = lastTimestamp != null
-            ? DateFormat('EEE, hh:mm a').format(lastTimestamp.toDate())
-            : 'N/A';
-      }
-      isUserDataLoading.value = false;
-      _getCurrentLocation();
-      _fetchActivityLogs();
-    }, onError: (e) {
-      isUserDataLoading.value = false;
-      Get.snackbar("Error", "Could not load user data.");
-    });
+            Timestamp? lastTimestamp = data['lastActivityTimestamp'];
+            lastActivityTime.value = lastTimestamp != null
+                ? DateFormat('EEE, hh:mm a').format(lastTimestamp.toDate())
+                : 'N/A';
+          }
+
+          isUserDataLoading.value = false;
+
+          // ✅ Only load location once to prevent blinking
+          if (!hasLoadedLocation.value) {
+            _getCurrentLocation();
+            hasLoadedLocation.value = true;
+          }
+
+          _fetchActivityLogs();
+        }, onError: (e) {
+          isUserDataLoading.value = false;
+          Get.snackbar("Error", "Could not load user data.");
+        });
   }
 
+  // ---------------- LOCATION FETCH ----------------
   Future<void> _getCurrentLocation() async {
     isLocationError.value = false;
     currentAddress.value = 'Getting location...';
     try {
-      Position position = await _determinePosition();
-      currentLatLng.value = LatLng(position.latitude, position.longitude);
+      loc.LocationData position = await _determinePosition();
 
-      markers.clear();
-      markers.add(Marker(
-        markerId: const MarkerId('currentLocation'),
-        position: currentLatLng.value!,
-      ));
+      final newLatLng = LatLng(position.latitude!, position.longitude!);
+      if (currentLatLng.value == null ||
+          currentLatLng.value!.latitude != newLatLng.latitude ||
+          currentLatLng.value!.longitude != newLatLng.longitude) {
+        currentLatLng.value = newLatLng;
 
-      mapController?.animateCamera(CameraUpdate.newLatLng(currentLatLng.value!));
+        markers
+          ..clear()
+          ..add(Marker(
+            markerId: const MarkerId('currentLocation'),
+            position: newLatLng,
+          ));
+
+        mapController?.animateCamera(CameraUpdate.newLatLng(newLatLng));
+      }
 
       List<geo.Placemark> placemarks = await geo.placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
+        position.latitude!,
+        position.longitude!,
       );
       if (placemarks.isNotEmpty) {
         geo.Placemark place = placemarks[0];
@@ -186,10 +232,10 @@ class HomeController extends GetxController {
     } catch (e) {
       isLocationError.value = true;
       currentAddress.value = e.toString();
-      Get.snackbar("Location Error", e.toString());
     }
   }
 
+  // ---------------- CLOCK IN / OUT ----------------
   Future<void> toggleClockInStatus() async {
     isLoading.value = true;
 
@@ -198,10 +244,14 @@ class HomeController extends GetxController {
       isLoading.value = false;
       return;
     }
+
     if (currentLatLng.value == null) {
-      Get.snackbar("Error", "Cannot clock in/out without a location.");
-      isLoading.value = false;
-      return;
+      await _getCurrentLocation();
+      if (currentLatLng.value == null) {
+        Get.snackbar("Error", "Cannot clock in/out without a location.");
+        isLoading.value = false;
+        return;
+      }
     }
 
     final bool currentStatus = isClockedIn.value;
@@ -209,7 +259,6 @@ class HomeController extends GetxController {
     final Timestamp now = Timestamp.now();
 
     try {
-      // 1. Log this activity to the subcollection
       await _firestore
           .collection('users')
           .doc(user.uid)
@@ -217,22 +266,19 @@ class HomeController extends GetxController {
           .add({
         'status': newStatus,
         'timestamp': now,
-        'location': GeoPoint(currentLatLng.value!.latitude, currentLatLng.value!.longitude),
+        'location': GeoPoint(
+            currentLatLng.value!.latitude, currentLatLng.value!.longitude),
       });
 
-      // 2. Update the main user document
       await _firestore.collection('users').doc(user.uid).update({
         'isClockedIn': !currentStatus,
         'lastActivityTimestamp': now,
-        'currentLocation': GeoPoint(currentLatLng.value!.latitude, currentLatLng.value!.longitude),
+        'currentLocation': GeoPoint(
+            currentLatLng.value!.latitude, currentLatLng.value!.longitude),
         'lastSeen': now,
       });
 
-      // 3. Start or Stop the location service
       if (newStatus == 'clocked-in') {
-
-        // --- ADD THIS BLOCK TO WRITE THE FIRST POINT ---
-        // This creates the history document immediately on clock-in
         final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
         final historyDocRef = _firestore
             .collection('users')
@@ -240,19 +286,18 @@ class HomeController extends GetxController {
             .collection('location_history')
             .doc(today);
 
-        final newLocation = GeoPoint(currentLatLng.value!.latitude, currentLatLng.value!.longitude);
+        final newLocation = GeoPoint(
+            currentLatLng.value!.latitude, currentLatLng.value!.longitude);
 
         historyDocRef.set({
           'path': FieldValue.arrayUnion([
             {'lat': newLocation.latitude, 'lng': newLocation.longitude}
           ]),
         }, SetOptions(merge: true));
-        // --- END OF NEW BLOCK ---
 
-        _startLocationTracking(); // This will now add the *second* point in 5 mins
+        _startLocationTracking();
         Get.snackbar("Success", "You are now clocked in.",
             backgroundColor: Colors.green, colorText: Colors.white);
-
       } else {
         _stopLocationTracking();
         Get.snackbar("Success", "You are now clocked out.",
@@ -261,14 +306,14 @@ class HomeController extends GetxController {
 
       isClockedIn.value = !currentStatus;
       _fetchActivityLogs();
-
     } catch (e) {
-      Get.snackbar("Error", "Failed to update status: $e.toString()");
+      Get.snackbar("Error", "Failed to update status: $e");
     } finally {
       isLoading.value = false;
     }
   }
 
+  // ---------------- ACTIVITY LOGS ----------------
   void _fetchActivityLogs() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -321,16 +366,54 @@ class HomeController extends GetxController {
     Get.offAllNamed(Routes.LOGIN);
   }
 
-  Future<Position> _determinePosition() async {
-    var status = await Permission.location.request();
-    if (status.isDenied) {
-      return Future.error('Location permissions are denied');
+  // ---------------- PERMISSION HANDLING ----------------
+  Future<loc.LocationData> _determinePosition() async {
+    bool serviceEnabled = await location.serviceEnabled();
+    if (!serviceEnabled) {
+      serviceEnabled = await location.requestService();
+      if (!serviceEnabled) {
+        Get.snackbar("Location Service Disabled",
+            "Please turn on your phone's GPS or Location service.");
+        return Future.error('Location services are disabled.');
+      }
     }
-    if (status.isPermanentlyDenied) {
-      return Future.error(
-          'Location permissions are permanently denied, we cannot request permissions.');
+
+    loc.PermissionStatus permissionGranted = await location.hasPermission();
+    if (permissionGranted == loc.PermissionStatus.denied) {
+      permissionGranted = await location.requestPermission();
     }
-    return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high);
+
+    if (permissionGranted == loc.PermissionStatus.granted ||
+        permissionGranted == loc.PermissionStatus.grantedLimited) {
+      return await location.getLocation();
+    }
+
+    if (permissionGranted == loc.PermissionStatus.deniedForever) {
+      Get.dialog(
+        AlertDialog(
+          title: const Text('Permission Required'),
+          content: const Text(
+              'Location permission has been permanently denied. Please go to your app settings to enable it.'),
+          actions: [
+            TextButton(
+              child: const Text("Cancel"),
+              onPressed: () => Get.back(),
+            ),
+            TextButton(
+              child: const Text("Open Settings"),
+              onPressed: () {
+                Get.back();
+                perm_handler.openAppSettings();
+              },
+            ),
+          ],
+        ),
+      );
+      return Future.error('Location permissions are permanently denied.');
+    }
+
+    Get.snackbar("Permission Denied",
+        "Location permission is required to continue.");
+    return Future.error('Location permissions are denied.');
   }
 }

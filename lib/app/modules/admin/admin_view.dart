@@ -14,15 +14,12 @@ class AdminView extends GetView<AdminController> {
         appBar: AppBar(
           title: const Text("Admin Dashboard"),
           actions: [
-            // This button is now redundant, but we can keep it.
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: () => controller.onRefresh(),
             ),
           ],
         ),
-        // --- WE ARE REVERTING THE BODY STRUCTURE ---
-        // This Column is now the main body, not inside a ScrollView
         body: Column(
           children: [
             // TOP SECTION – Stats & Map (This part is now FIXED)
@@ -48,8 +45,12 @@ class AdminView extends GetView<AdminController> {
                         target: LatLng(11.5564, 104.9282), // Cambodia default
                         zoom: 12,
                       ),
+                      // --- THIS LINE IS ALREADY IN YOUR CODE ---
+                      // --- A STALE BUILD IS PREVENTING IT FROM WORKING ---
                       zoomControlsEnabled: true,
-                      rotateGesturesEnabled: true, // <-- Your gestures will work now
+
+                      // ---
+                      rotateGesturesEnabled: true,
                       tiltGesturesEnabled: true,
                     ),
                   )),
@@ -57,22 +58,13 @@ class AdminView extends GetView<AdminController> {
               ),
             ),
 
-            // --- BOTTOM LIST ---
-            // 1. Wrap the list in an Expanded widget so it fills the remaining space.
-            // 2. Put the RefreshIndicator HERE, so it only wraps the list.
+            // BOTTOM LIST
             Expanded(
               child: RefreshIndicator(
-                onRefresh: controller.onRefresh, // <-- Call the function
+                onRefresh: controller.onRefresh,
                 child: Obx(() => ListView.builder(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   itemCount: controller.staffList.length,
-
-                  // --- KEY CHANGES HERE ---
-                  // We REMOVED shrinkWrap and NeverScrollableScrollPhysics
-                  // because this ListView is now allowed to scroll
-                  // inside its Expanded parent.
-                  // --- END OF KEY CHANGES ---
-
                   itemBuilder: (context, index) {
                     final staff = controller.staffList[index];
                     return Card(
