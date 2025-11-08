@@ -1,12 +1,16 @@
 // lib/app/modules/admin/admin_controller.dart
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // <-- ADD THIS IMPORT
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 
+import '../../routes/app_pages.dart'; // <-- ADD THIS IMPORT
+
 class AdminController extends GetxController {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance; // <-- ADD THIS
 
   var totalStaff = 0.obs;
   var clockedInCount = 0.obs;
@@ -30,26 +34,43 @@ class AdminController extends GetxController {
     super.onClose();
   }
 
-  // --- ADD THIS NEW PUBLIC onRefresh FUNCTION ---
   Future<void> onRefresh() async {
-    // This simply re-triggers the stream listener.
-    // The stream itself will handle updating the UI.
     _listenToStaffData();
-    // We can return a completed Future immediately.
     return Future.value();
   }
-  // --- END OF NEW FUNCTION ---
 
   void onMapCreated(GoogleMapController controller) {
     mapController = controller;
   }
 
-  // Rename this back to a private method (with an underscore)
+  // --- !! NEW FUNCTION TO ANIMATE MAP !! ---
+  void zoomToStaff(Map<String, dynamic> staff) {
+    if (mapController == null) {
+      Get.snackbar("Map Error", "Map is not ready yet.");
+      return;
+    }
+
+    final GeoPoint? location = staff['location']; // Get location from the map
+
+    if (location != null) {
+      final latLng = LatLng(location.latitude, location.longitude);
+      mapController!.animateCamera(
+        CameraUpdate.newLatLngZoom(latLng, 16.0), // Zoom in
+      );
+    } else {
+      Get.snackbar(
+        "No Location",
+        "${staff['name']} does not have a location recorded.",
+      );
+    }
+  }
+  // --- !! END OF NEW FUNCTION !! ---
+
   void _listenToStaffData() {
-    _usersStream?.cancel(); // Cancel any existing stream before starting a new one
+    _usersStream?.cancel();
     _usersStream = _firestore
         .collection('users')
-        .where('role', isEqualTo: 'staff') // Only staff
+        .where('role', isEqualTo: 'staff')
         .snapshots()
         .listen((snapshot) {
       totalStaff.value = snapshot.docs.length;
@@ -57,7 +78,6 @@ class AdminController extends GetxController {
           .where((e) => e['isClockedIn'] == true)
           .length;
 
-      // Clear old markers before rebuilding
       markers.clear();
       staffList.value = [];
 
@@ -87,7 +107,7 @@ class AdminController extends GetxController {
           'name': data['name'] ?? '',
           'isClockedIn': isClockedIn,
           'lastSeen': data['lastSeen'],
-          'location': gp,
+          'location': gp, // <-- This 'location' key is used in zoomToStaff
         });
       }
     });
@@ -96,5 +116,15 @@ class AdminController extends GetxController {
   String formatTime(Timestamp? ts) {
     if (ts == null) return "No data";
     return DateFormat('EEE, MMM d | hh:mm a').format(ts.toDate());
+  }
+
+  // --- ADDED SIGNOUT METHOD ---
+  Future<void> signOut() async {
+    try {
+      await _auth.signOut();
+      Get.offAllNamed(Routes.LOGIN);
+    } catch (e) {
+      Get.snackbar("Error", "Could not sign out.");
+    }
   }
 }

@@ -9,18 +9,17 @@ class StaffHistoryView extends GetView<StaffHistoryController> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Obx(() => Text("History for ${controller.staffName.value}")),
+        // Updated title to be more specific
+        title: Obx(() => Text("Location: ${controller.staffName.value}")),
       ),
       body: Obx(
             () {
-          if (controller.isLoading.value) {
-            return const Center(child: CircularProgressIndicator());
-          }
+          // No isLoading check needed as it's so fast
           return GoogleMap(
             onMapCreated: controller.onMapCreated,
             initialCameraPosition: controller.initialCameraPos.value,
             markers: controller.markers.value,
-            polylines: controller.polylines.value,
+            // --- REMOVED POLYLINES ---
             zoomControlsEnabled: true,
           );
         },

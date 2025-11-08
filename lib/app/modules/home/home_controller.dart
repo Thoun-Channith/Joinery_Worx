@@ -9,6 +9,9 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart' as perm_handler;
 import 'package:location/location.dart' as loc;
+import 'package:firebase_messaging/firebase_messaging.dart';
+
+import 'package:geolocator/geolocator.dart';
 
 import '../../models/activity_log_model.dart';
 import '../../routes/app_pages.dart';
@@ -16,6 +19,7 @@ import '../../routes/app_pages.dart';
 class HomeController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
 
   final loc.Location location = loc.Location();
   StreamSubscription<loc.LocationData>? _locationSubscription;
@@ -35,7 +39,6 @@ class HomeController extends GetxController {
   var dateFilter = 'Last 7 Days'.obs;
   var currentTime = ''.obs;
 
-  // Prevent repeated location refresh
   var hasLoadedLocation = false.obs;
 
   GoogleMapController? mapController;
@@ -58,9 +61,9 @@ class HomeController extends GetxController {
     super.onClose();
   }
 
-  // ---------------- LOCATION TRACKING ----------------
+  // ---------------- LOCATION TRACKING (Using 'location' plugin) ----------------
   void _startLocationTracking() async {
-    if (_locationSubscription != null) return; // ✅ Prevent duplicate subscriptions
+    if (_locationSubscription != null) return;
 
     final user = _auth.currentUser;
     if (user == null) return;
@@ -98,34 +101,44 @@ class HomeController extends GetxController {
       print("Error enabling background mode: $e");
     }
 
+    // --- !! 1. UPDATED SETTINGS FOR LIVE TRACKING !! ---
     await location.changeSettings(
       accuracy: loc.LocationAccuracy.high,
-      interval: 300000, // 5 minutes
-      distanceFilter: 0,
+      interval: 30000, // 30 seconds
+      distanceFilter: 10, // 10 meters
     );
 
     _locationSubscription =
-        location.onLocationChanged.listen((loc.LocationData locationData) {
-          if (locationData.latitude == null || locationData.longitude == null) return;
+    // --- !! 2. MAKE LISTENER ASYNC !! ---
+    location.onLocationChanged.listen((loc.LocationData locationData) async {
+      if (locationData.latitude == null || locationData.longitude == null) return;
 
-          final newLocation =
-          GeoPoint(locationData.latitude!, locationData.longitude!);
-          final userDocRef = _firestore.collection('users').doc(user.uid);
-          final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-          final historyDocRef =
-          userDocRef.collection('location_history').doc(today);
+      final newLatLng = LatLng(locationData.latitude!, locationData.longitude!);
 
-          userDocRef.update({
-            'currentLocation': newLocation,
-            'lastSeen': FieldValue.serverTimestamp(),
-          });
+      // --- !! 3. CALL THE NEW FUNCTION TO UPDATE UI !! ---
+      // This will update the map, marker, and address
+      await _updateMapAndAddress(newLatLng);
 
-          historyDocRef.set({
-            'path': FieldValue.arrayUnion([
-              {'lat': newLocation.latitude, 'lng': newLocation.longitude}
-            ]),
-          }, SetOptions(merge: true));
-        });
+      // --- This is the original logic to save to Firestore ---
+      final newLocation =
+      GeoPoint(locationData.latitude!, locationData.longitude!);
+      final userDocRef = _firestore.collection('users').doc(user.uid);
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final historyDocRef =
+      userDocRef.collection('location_history').doc(today);
+
+      userDocRef.update({
+        'currentLocation': newLocation,
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
+
+      historyDocRef.set({
+        'path': FieldValue.arrayUnion([
+          {'lat': newLocation.latitude, 'lng': newLocation.longitude}
+        ]),
+      }, SetOptions(merge: true));
+      // --- End of original logic ---
+    });
   }
 
   void _stopLocationTracking() {
@@ -162,52 +175,83 @@ class HomeController extends GetxController {
     }
 
     _userStreamSubscription?.cancel();
-    _userStreamSubscription =
-        _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
-          if (doc.exists) {
-            var data = doc.data()!;
-            userName.value = data['name'] ?? 'User';
-            userRole.value = data['role'] ?? 'staff';
-            isClockedIn.value = data['isClockedIn'] ?? false;
+    _userStreamSubscription = _firestore
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((doc) async {
+      if (doc.exists) {
+        var data = doc.data()!;
 
-            if (isClockedIn.value && _locationSubscription == null) {
-              _startLocationTracking();
-            } else if (!isClockedIn.value && _locationSubscription != null) {
-              _stopLocationTracking();
+        // --- SINGLE DEVICE LOGIN CHECK ---
+        String? currentDeviceToken;
+        bool canCheckToken = true;
+        try {
+          currentDeviceToken = await _firebaseMessaging.getToken();
+        } catch (e) {
+          print("Warning: Could not get FCM token for device check: $e");
+          canCheckToken = false;
+        }
+
+        if (canCheckToken && data.containsKey('fcmToken')) {
+          String storedToken = data['fcmToken'] ?? '';
+          if (storedToken.isNotEmpty && storedToken != currentDeviceToken) {
+
+            if (data['isClockedIn'] == true) {
+              await _firestore.collection('users').doc(user.uid).update({
+                'isClockedIn': false,
+                'lastActivityTimestamp': FieldValue.serverTimestamp(),
+              });
             }
 
-            Timestamp? lastTimestamp = data['lastActivityTimestamp'];
-            lastActivityTime.value = lastTimestamp != null
-                ? DateFormat('EEE, hh:mm a').format(lastTimestamp.toDate())
-                : 'N/A';
+            await _auth.signOut();
+            Get.offAllNamed(Routes.LOGIN);
+            Get.snackbar(
+                "Logged Out", "You have been logged in on another device.");
+            _userStreamSubscription?.cancel();
+            return;
           }
+        }
+        // --- END OF SINGLE DEVICE LOGIN CHECK ---
 
-          isUserDataLoading.value = false;
+        userName.value = data['name'] ?? 'User';
+        userRole.value = data['role'] ?? 'staff';
+        isClockedIn.value = data['isClockedIn'] ?? false;
 
-          // ✅ Only load location once to prevent blinking
-          if (!hasLoadedLocation.value) {
-            _getCurrentLocation();
-            hasLoadedLocation.value = true;
-          }
+        if (isClockedIn.value && _locationSubscription == null) {
+          _startLocationTracking();
+        } else if (!isClockedIn.value && _locationSubscription != null) {
+          _stopLocationTracking();
+        }
 
-          _fetchActivityLogs();
-        }, onError: (e) {
-          isUserDataLoading.value = false;
-          Get.snackbar("Error", "Could not load user data.");
-        });
+        Timestamp? lastTimestamp = data['lastActivityTimestamp'];
+        lastActivityTime.value = lastTimestamp != null
+            ? DateFormat('EEE, hh:mm a').format(lastTimestamp.toDate())
+            : 'N/A';
+      }
+
+      isUserDataLoading.value = false;
+
+      if (!hasLoadedLocation.value) {
+        _getCurrentLocation();
+        hasLoadedLocation.value = true;
+      }
+
+      _fetchActivityLogs();
+    }, onError: (e) {
+      isUserDataLoading.value = false;
+      Get.snackbar("Error", "Could not load user data.");
+    });
   }
 
-  // ---------------- LOCATION FETCH ----------------
-  Future<void> _getCurrentLocation() async {
-    isLocationError.value = false;
-    currentAddress.value = 'Getting location...';
+  // --- !! 4. NEW REUSABLE FUNCTION TO UPDATE THE UI !! ---
+  Future<void> _updateMapAndAddress(LatLng newLatLng) async {
     try {
-      loc.LocationData position = await _determinePosition();
-
-      final newLatLng = LatLng(position.latitude!, position.longitude!);
+      // Only update if the location has actually changed
       if (currentLatLng.value == null ||
           currentLatLng.value!.latitude != newLatLng.latitude ||
           currentLatLng.value!.longitude != newLatLng.longitude) {
+
         currentLatLng.value = newLatLng;
 
         markers
@@ -218,17 +262,35 @@ class HomeController extends GetxController {
           ));
 
         mapController?.animateCamera(CameraUpdate.newLatLng(newLatLng));
-      }
 
-      List<geo.Placemark> placemarks = await geo.placemarkFromCoordinates(
-        position.latitude!,
-        position.longitude!,
-      );
-      if (placemarks.isNotEmpty) {
-        geo.Placemark place = placemarks[0];
-        currentAddress.value =
-        "${place.street}, ${place.locality}, ${place.country}";
+        // Also update the address
+        List<geo.Placemark> placemarks = await geo.placemarkFromCoordinates(
+          newLatLng.latitude,
+          newLatLng.longitude,
+        );
+        if (placemarks.isNotEmpty) {
+          geo.Placemark place = placemarks[0];
+          currentAddress.value =
+          "${place.street}, ${place.locality}, ${place.country}";
+        }
       }
+    } catch (e) {
+      // Handle geocoding errors, e.g., network issues
+      currentAddress.value = "Could not update address";
+    }
+  }
+
+  // ---------------- LOCATION FETCH (Using 'geolocator' plugin) ----------------
+  Future<void> _getCurrentLocation() async {
+    isLocationError.value = false;
+    currentAddress.value = 'Getting location...';
+    try {
+      Position position = await _determinePosition();
+      final newLatLng = LatLng(position.latitude, position.longitude);
+
+      // --- !! 5. CALL THE NEW FUNCTION TO UPDATE UI !! ---
+      await _updateMapAndAddress(newLatLng);
+
     } catch (e) {
       isLocationError.value = true;
       currentAddress.value = e.toString();
@@ -361,34 +423,74 @@ class HomeController extends GetxController {
     _fetchActivityLogs();
   }
 
+  // ---------------- SIGNOUT ----------------
   Future<void> signOut() async {
-    await _auth.signOut();
-    Get.offAllNamed(Routes.LOGIN);
+    isLoading.value = true;
+    try {
+      final user = _auth.currentUser;
+
+      if (user != null && isClockedIn.value) {
+
+        final Timestamp now = Timestamp.now();
+        GeoPoint? logoutLocation;
+
+        if (currentLatLng.value != null) {
+          logoutLocation = GeoPoint(
+              currentLatLng.value!.latitude, currentLatLng.value!.longitude);
+        }
+
+        await _firestore
+            .collection('users')
+            .doc(user.uid)
+            .collection('activity_logs')
+            .add({
+          'status': 'clocked-out',
+          'timestamp': now,
+          'location': logoutLocation,
+        });
+
+        await _firestore.collection('users').doc(user.uid).update({
+          'isClockedIn': false,
+          'lastActivityTimestamp': now,
+        });
+
+        _stopLocationTracking();
+      }
+
+      _userStreamSubscription?.cancel();
+
+      await _auth.signOut();
+      Get.offAllNamed(Routes.LOGIN);
+    } catch (e) {
+      Get.snackbar("Error", "Could not sign out: $e");
+    } finally {
+      isLoading.value = false;
+    }
   }
 
-  // ---------------- PERMISSION HANDLING ----------------
-  Future<loc.LocationData> _determinePosition() async {
-    bool serviceEnabled = await location.serviceEnabled();
+  // ---------------- PERMISSION HANDLING (Using 'geolocator' plugin) ----------------
+  Future<Position> _determinePosition() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      serviceEnabled = await location.requestService();
-      if (!serviceEnabled) {
-        Get.snackbar("Location Service Disabled",
-            "Please turn on your phone's GPS or Location service.");
-        return Future.error('Location services are disabled.');
+      Get.snackbar("Location Service Disabled",
+          "Please turn on your phone's GPS or Location service.");
+      return Future.error('Location services are disabled.');
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        Get.snackbar("Permission Denied",
+            "Location permission is required to continue.");
+        return Future.error('Location permissions are denied.');
       }
     }
 
-    loc.PermissionStatus permissionGranted = await location.hasPermission();
-    if (permissionGranted == loc.PermissionStatus.denied) {
-      permissionGranted = await location.requestPermission();
-    }
-
-    if (permissionGranted == loc.PermissionStatus.granted ||
-        permissionGranted == loc.PermissionStatus.grantedLimited) {
-      return await location.getLocation();
-    }
-
-    if (permissionGranted == loc.PermissionStatus.deniedForever) {
+    if (permission == LocationPermission.deniedForever) {
       Get.dialog(
         AlertDialog(
           title: const Text('Permission Required'),
@@ -412,8 +514,8 @@ class HomeController extends GetxController {
       return Future.error('Location permissions are permanently denied.');
     }
 
-    Get.snackbar("Permission Denied",
-        "Location permission is required to continue.");
-    return Future.error('Location permissions are denied.');
+    return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high
+    );
   }
 }

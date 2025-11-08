@@ -3,11 +3,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 class AuthController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  // final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance; // Ensure this is removed/commented
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
 
   final TextEditingController nameController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
@@ -37,7 +38,7 @@ class AuthController extends GetxController {
 
       await userCredential.user!.updateDisplayName(nameController.text.trim());
 
-      // String? fcmToken = await _firebaseMessaging.getToken(); // Ensure this is removed/commented
+      String? fcmToken = await _firebaseMessaging.getToken();
 
       final newUser = {
         'uid': userCredential.user!.uid,
@@ -49,7 +50,7 @@ class AuthController extends GetxController {
         'role': 'staff',
         'position': '',
         'employeeId': '',
-        'fcmToken': '', // Set to empty
+        'fcmToken': fcmToken ?? '',
         'isCheckedIn': false,
         'isClockedIn': false,
         'currentLocation': null,
@@ -80,10 +81,28 @@ class AuthController extends GetxController {
     }
     isLoading.value = true;
     try {
-      await _auth.signInWithEmailAndPassword(
+      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
+
+      // --- MODIFICATION: CATCH APNS ERROR ---
+      try {
+        String? fcmToken = await _firebaseMessaging.getToken();
+        if (userCredential.user != null) {
+          await _firestore
+              .collection('users')
+              .doc(userCredential.user!.uid)
+              .update({
+            'fcmToken': fcmToken ?? '',
+          });
+        }
+      } catch (e) {
+        // This can happen on iOS if APNS token is not yet available
+        print("Warning: Could not update FCM token during login: $e");
+        // Do not block login, just skip token update
+      }
+      // --- END OF MODIFICATION ---
 
       // Ensure this line IS REMOVED or commented out:
       // Get.offAllNamed(Routes.HOME);
