@@ -104,7 +104,7 @@ class HomeController extends GetxController {
     // --- !! 1. UPDATED SETTINGS FOR LIVE TRACKING !! ---
     await location.changeSettings(
       accuracy: loc.LocationAccuracy.high,
-      interval: 30000, // 30 seconds
+      interval: 300000, // 30 seconds
       distanceFilter: 10, // 10 meters
     );
 
