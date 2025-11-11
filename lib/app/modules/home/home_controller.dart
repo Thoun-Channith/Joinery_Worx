@@ -104,8 +104,8 @@ class HomeController extends GetxController {
     // --- !! 1. UPDATED SETTINGS FOR LIVE TRACKING !! ---
     await location.changeSettings(
       accuracy: loc.LocationAccuracy.high,
-      interval: 300000, // 5-minute interval
-      distanceFilter: 10, // 10 meters
+      interval: 300000, // 5 min
+      distanceFilter: 50, // 50 meters
     );
 
     _locationSubscription =
@@ -129,7 +129,7 @@ class HomeController extends GetxController {
 
       userDocRef.update({
         'currentLocation': newLocation,
-        'lastSeen': FieldValue.serverTimestamp(),
+        'lastSeen': FieldValue.serverTimestamp(), // ✅ SERVER TIME
       });
 
       historyDocRef.set({
@@ -200,7 +200,7 @@ class HomeController extends GetxController {
             if (data['isClockedIn'] == true) {
               await _firestore.collection('users').doc(user.uid).update({
                 'isClockedIn': false,
-                'lastActivityTimestamp': FieldValue.serverTimestamp(),
+                'lastActivityTimestamp': FieldValue.serverTimestamp(), // ✅ SERVER TIME
               });
             }
 
@@ -318,7 +318,6 @@ class HomeController extends GetxController {
 
     final bool currentStatus = isClockedIn.value;
     final String newStatus = currentStatus ? 'clocked-out' : 'clocked-in';
-    final Timestamp now = Timestamp.now();
 
     try {
       await _firestore
@@ -327,17 +326,17 @@ class HomeController extends GetxController {
           .collection('activity_logs')
           .add({
         'status': newStatus,
-        'timestamp': now,
+        'timestamp': FieldValue.serverTimestamp(), // ✅ SERVER TIME
         'location': GeoPoint(
             currentLatLng.value!.latitude, currentLatLng.value!.longitude),
       });
 
       await _firestore.collection('users').doc(user.uid).update({
         'isClockedIn': !currentStatus,
-        'lastActivityTimestamp': now,
+        'lastActivityTimestamp': FieldValue.serverTimestamp(), // ✅ SERVER TIME
         'currentLocation': GeoPoint(
             currentLatLng.value!.latitude, currentLatLng.value!.longitude),
-        'lastSeen': now,
+        'lastSeen': FieldValue.serverTimestamp(), // ✅ SERVER TIME
       });
 
       if (newStatus == 'clocked-in') {
@@ -403,18 +402,51 @@ class HomeController extends GetxController {
     }
   }
 
+
   void _getAddressForLog(ActivityLog log) async {
+    // Check if location is valid before attempting geocoding
+    if (log.location.latitude == 0.0 && log.location.longitude == 0.0) {
+      log.address.value = "Location not recorded";
+      return;
+    }
+
     try {
       List<geo.Placemark> placemarks = await geo.placemarkFromCoordinates(
         log.location.latitude,
         log.location.longitude,
       );
+
       if (placemarks.isNotEmpty) {
         geo.Placemark place = placemarks[0];
-        log.address.value = "${place.street}, ${place.locality}";
+
+        // Build address with available components
+        List<String> addressParts = [];
+        if (place.street != null && place.street!.isNotEmpty) {
+          addressParts.add(place.street!);
+        }
+        if (place.locality != null && place.locality!.isNotEmpty) {
+          addressParts.add(place.locality!);
+        }
+        if (place.administrativeArea != null && place.administrativeArea!.isNotEmpty) {
+          addressParts.add(place.administrativeArea!);
+        }
+
+        if (addressParts.isNotEmpty) {
+          log.address.value = addressParts.join(', ');
+        } else {
+          log.address.value = "Address unavailable";
+        }
+      } else {
+        log.address.value = "No address found";
       }
     } catch (e) {
-      log.address.value = "Could not load address";
+      print("Geocoding error for coordinates (${log.location.latitude}, ${log.location.longitude}): $e");
+      log.address.value = "Finding address...";
+
+      // Retry after a delay
+      Future.delayed(const Duration(seconds: 2), () {
+        _getAddressForLog(log);
+      });
     }
   }
 
@@ -430,13 +462,18 @@ class HomeController extends GetxController {
       final user = _auth.currentUser;
 
       if (user != null && isClockedIn.value) {
-
-        final Timestamp now = Timestamp.now();
         GeoPoint? logoutLocation;
 
         if (currentLatLng.value != null) {
           logoutLocation = GeoPoint(
               currentLatLng.value!.latitude, currentLatLng.value!.longitude);
+        } else {
+          // Try to get current location before signing out
+          await _getCurrentLocation();
+          if (currentLatLng.value != null) {
+            logoutLocation = GeoPoint(
+                currentLatLng.value!.latitude, currentLatLng.value!.longitude);
+          }
         }
 
         await _firestore
@@ -445,13 +482,13 @@ class HomeController extends GetxController {
             .collection('activity_logs')
             .add({
           'status': 'clocked-out',
-          'timestamp': now,
-          'location': logoutLocation,
+          'timestamp': FieldValue.serverTimestamp(),
+          'location': logoutLocation, // This can be null if no location available
         });
 
         await _firestore.collection('users').doc(user.uid).update({
           'isClockedIn': false,
-          'lastActivityTimestamp': now,
+          'lastActivityTimestamp': FieldValue.serverTimestamp(),
         });
 
         _stopLocationTracking();

@@ -312,6 +312,7 @@ class HomeView extends GetView<HomeController> {
     );
   }
 
+  // IN HomeView - UPDATE THE _buildRecentActivityList METHOD:
   Widget _buildRecentActivityList(ThemeData theme) {
     return Obx(() {
       if (controller.activityLogs.isEmpty) {
@@ -357,7 +358,15 @@ class HomeView extends GetView<HomeController> {
                         Expanded(
                           child: Text(
                             log.address.value,
-                            style: theme.textTheme.bodySmall,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontStyle: log.address.value == 'Loading address...'
+                                  ? FontStyle.italic
+                                  : FontStyle.normal,
+                              color: log.address.value.contains('Could not load') ||
+                                  log.address.value.contains('unavailable')
+                                  ? Colors.orange
+                                  : theme.textTheme.bodySmall?.color,
+                            ),
                           ),
                         ),
                       ],

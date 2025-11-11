@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import '../../routes/app_pages.dart';
 
 class AuthController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -16,9 +17,36 @@ class AuthController extends GetxController {
 
   var isPasswordHidden = true.obs;
   var isLoading = false.obs;
+  var isLogin = true.obs;
 
   void togglePasswordVisibility() {
     isPasswordHidden.value = !isPasswordHidden.value;
+  }
+
+  Future<String?> _getFCMToken() async {
+    try {
+      if (GetPlatform.isIOS) {
+        NotificationSettings settings = await _firebaseMessaging.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+
+        if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+          print('iOS Notification permissions granted');
+        } else {
+          print('iOS Notification permissions denied');
+          return null;
+        }
+      }
+
+      String? token = await _firebaseMessaging.getToken();
+      print('FCM Token: $token');
+      return token;
+    } catch (e) {
+      print('Error getting FCM token: $e');
+      return null;
+    }
   }
 
   Future<void> createUser() async {
@@ -38,7 +66,7 @@ class AuthController extends GetxController {
 
       await userCredential.user!.updateDisplayName(nameController.text.trim());
 
-      String? fcmToken = await _firebaseMessaging.getToken();
+      String? fcmToken = await _getFCMToken();
 
       final newUser = {
         'uid': userCredential.user!.uid,
@@ -51,7 +79,6 @@ class AuthController extends GetxController {
         'position': '',
         'employeeId': '',
         'fcmToken': fcmToken ?? '',
-        'isCheckedIn': false,
         'isClockedIn': false,
         'currentLocation': null,
       };
@@ -61,11 +88,18 @@ class AuthController extends GetxController {
           .doc(userCredential.user!.uid)
           .set(newUser);
 
-      print(
-          'User created: ${userCredential.user!.uid}, Name: ${nameController.text.trim()}');
+      print('User created: ${userCredential.user!.uid}, Name: ${nameController.text.trim()}');
 
-      // Ensure this line IS REMOVED or commented out:
-      // Get.offAllNamed(Routes.HOME);
+      nameController.clear();
+      emailController.clear();
+      passwordController.clear();
+
+      Get.snackbar('Success', 'Account created successfully! Please login.',
+          backgroundColor: Colors.green,
+          colorText: Colors.white,
+          duration: const Duration(seconds: 3));
+
+      isLogin.value = true;
 
     } on FirebaseAuthException catch (e) {
       Get.snackbar('Sign Up Failed', e.message ?? 'An unknown error occurred.');
@@ -86,26 +120,22 @@ class AuthController extends GetxController {
         password: passwordController.text.trim(),
       );
 
-      // --- MODIFICATION: CATCH APNS ERROR ---
       try {
-        String? fcmToken = await _firebaseMessaging.getToken();
-        if (userCredential.user != null) {
+        String? fcmToken = await _getFCMToken();
+        if (userCredential.user != null && fcmToken != null) {
           await _firestore
               .collection('users')
               .doc(userCredential.user!.uid)
               .update({
-            'fcmToken': fcmToken ?? '',
+            'fcmToken': fcmToken,
+            'lastSeen': FieldValue.serverTimestamp(),
           });
         }
       } catch (e) {
-        // This can happen on iOS if APNS token is not yet available
         print("Warning: Could not update FCM token during login: $e");
-        // Do not block login, just skip token update
       }
-      // --- END OF MODIFICATION ---
 
-      // Ensure this line IS REMOVED or commented out:
-      // Get.offAllNamed(Routes.HOME);
+      Get.offAllNamed(Routes.HOME);
 
     } on FirebaseAuthException catch (e) {
       Get.snackbar('Login Failed', e.message ?? 'An unknown error occurred.');
